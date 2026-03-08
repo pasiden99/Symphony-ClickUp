@@ -1,0 +1,30 @@
+{
+  "name": "symphony-clickup",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "symphony": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "fastify": "^5.2.1",
+    "js-yaml": "^4.1.0",
+    "liquidjs": "^10.20.0",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
