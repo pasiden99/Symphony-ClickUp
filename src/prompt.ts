@@ -31,6 +31,9 @@ export function buildContinuationPrompt(issue: Issue, turnNumber: number, maxTur
     `Continue working on ClickUp task ${issue.identifier}: ${issue.title}.`,
     "Use the existing thread history instead of restating the original task.",
     `This is continuation turn ${turnNumber} of ${maxTurns}.`,
+    `For ClickUp task reads and mutations, use only Symphony's first-party tools with raw ClickUp task ID ${issue.id}.`,
+    `Do not use ${issue.identifier} as a ClickUp task ID; it is only Symphony's issue identifier.`,
+    "Do not call any mcp__clickup__* tools.",
     "Inspect the current workspace state, continue the implementation, and stop when the task is complete or blocked."
   ].join("\n");
 }
@@ -38,7 +41,9 @@ export function buildContinuationPrompt(issue: Issue, turnNumber: number, maxTur
 function serializeIssue(issue: Issue): Record<string, unknown> {
   return {
     id: issue.id,
+    clickup_task_id: issue.id,
     identifier: issue.identifier,
+    symphony_issue_identifier: issue.identifier,
     title: issue.title,
     description: issue.description,
     priority: issue.priority,

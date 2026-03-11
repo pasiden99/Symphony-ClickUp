@@ -116,6 +116,75 @@ describe("Orchestrator", () => {
     await vi.runOnlyPendingTimersAsync();
     expect(agentRunner.runAttempt).not.toHaveBeenCalled();
   });
+
+  test("retries failed work with a numbered attempt instead of redispatching as a fresh run", async () => {
+    const candidate: Issue = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "Do the work",
+      description: null,
+      priority: 1,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: new Date("2025-01-01T00:00:00Z").toISOString(),
+      updatedAt: null
+    };
+
+    const tracker: TrackerClient = {
+      fetchCandidateIssues: vi.fn(async () => [candidate]),
+      fetchIssuesByStates: vi.fn(async () => []),
+      fetchIssueStatesByIds: vi.fn(async () => [candidate])
+    };
+
+    const agentRunner = {
+      updateConfig: vi.fn(),
+      runAttempt: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: "failed",
+          issue: candidate,
+          attempt: null,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: "port_exit",
+          turnCount: 0
+        } satisfies RunAttemptResult)
+        .mockResolvedValueOnce({
+          status: "succeeded",
+          issue: candidate,
+          attempt: 1,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: null,
+          turnCount: 1
+        } satisfies RunAttemptResult)
+    };
+
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => tracker,
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      agentRunner as never,
+      createLogger({ enabled: false })
+    );
+
+    await orchestrator.start();
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+    expect(agentRunner.runAttempt).toHaveBeenCalledTimes(1);
+    expect(agentRunner.runAttempt.mock.calls[0]?.[0].attempt).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await Promise.resolve();
+
+    expect(agentRunner.runAttempt).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAttempt.mock.calls[1]?.[0].attempt).toBe(1);
+  });
 });
 
 function baseWorkflow(): WorkflowDefinition {

@@ -92,7 +92,33 @@ describe("ClickUpTrackerClient", () => {
       state: "Done"
     });
     expect(issues[1]?.identifier).toBe("CU-2");
+    expect(calls[0]).toContain("/api/v2/team/team-1/task");
     expect(calls.some((url) => url.includes("list_ids%5B%5D=list-1"))).toBe(true);
+  });
+
+  test("surfaces a helpful error when workspace_id is not a valid ClickUp workspace id", async () => {
+    const client = new ClickUpTrackerClient(
+      {
+        kind: "clickup",
+        endpoint: "https://api.clickup.com/api/v2",
+        apiKey: "token",
+        workspaceId: "60700898",
+        spaceIds: [],
+        folderIds: [],
+        listIds: ["list-1"],
+        activeStates: ["Todo"],
+        activeStateSet: new Set(["todo"]),
+        terminalStates: ["Done"],
+        terminalStateSet: new Set(["done"])
+      },
+      createLogger({ enabled: false }),
+      async () => jsonResponse({ err: "not found" }, 404)
+    );
+
+    await expect(client.fetchCandidateIssues()).rejects.toMatchObject({
+      code: "clickup_invalid_workspace",
+      message: expect.stringContaining("Workspace/team ID")
+    });
   });
 });
 

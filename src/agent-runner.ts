@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import { isActiveState } from "./config.js";
 import { CodexAppServerClient, type CodexTurnResult } from "./codex/client.js";
+import { ClickUpDynamicToolHandler } from "./codex/dynamic-tools.js";
 import { SymphonyError } from "./errors.js";
 import { buildContinuationPrompt, renderIssuePrompt } from "./prompt.js";
 import type { EffectiveConfig, Issue, LiveSessionEvent, RunAttemptResult, TrackerClient } from "./types.js";
@@ -72,7 +73,16 @@ export class AgentRunner {
 
       this.workspaceManager.assertInsideWorkspaceRoot(workspace.path);
 
-      const codexClient = new CodexAppServerClient(this.config.codex, this.logger);
+      const codexClient = new CodexAppServerClient(
+        this.config.codex,
+        this.logger,
+        new ClickUpDynamicToolHandler(this.config.tracker, this.logger, fetch, 30_000, {
+          currentIssue: {
+            id: issue.id,
+            identifier: issue.identifier
+          }
+        })
+      );
       session = await raceAbort(
         codexClient.startSession({
           workspacePath: workspace.path,

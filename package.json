@@ -1,13 +1,14 @@
 {
   "name": "symphony-clickup",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "bin": {
-    "symphony": "./dist/cli.js"
+    "symphony": "./dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 
 import { AgentRunner } from "./agent-runner.js";
 import { resolveEffectiveConfig } from "./config.js";
+import { loadProjectEnv } from "./env.js";
 import { SymphonyError } from "./errors.js";
 import { startHttpServer } from "./http.js";
 import { createLogger } from "./logging.js";
@@ -36,6 +37,7 @@ export class SymphonyService {
   }
 
   async start(): Promise<void> {
+    await loadProjectEnv({ workflowPath: this.workflowPath });
     const workflow = await loadWorkflow(this.workflowPath);
     const config = resolveEffectiveConfig(workflow, { workflowPath: this.workflowPath });
 
@@ -77,13 +79,13 @@ export class SymphonyService {
     await this.watcher?.close();
     this.watcher = null;
 
+    await this.orchestrator?.stop();
+    this.orchestrator = null;
+
     if (this.httpServer) {
       await this.httpServer.close();
       this.httpServer = null;
     }
-
-    await this.orchestrator?.stop();
-    this.orchestrator = null;
   }
 
   getLogger(): Logger {
@@ -96,6 +98,7 @@ export class SymphonyService {
     }
 
     try {
+      await loadProjectEnv({ workflowPath: this.workflowPath });
       const workflow = await loadWorkflow(this.workflowPath);
       const config = resolveEffectiveConfig(workflow, { workflowPath: this.workflowPath });
       this.workflow = workflow;

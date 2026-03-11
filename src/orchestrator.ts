@@ -437,6 +437,47 @@ export class Orchestrator {
 
     if (event.event === "session_started") {
       entry.session.turnCount += 1;
+      this.logger.info(
+        {
+          issue_id: issueId,
+          issue_identifier: entry.identifier,
+          session_id: event.sessionId ?? entry.session.sessionId,
+          turn_id: event.turnId ?? entry.session.turnId,
+          turn_count: entry.session.turnCount
+        },
+        "turn_started"
+      );
+    }
+
+    if (
+      event.event === "dynamic_tools_advertised" ||
+      event.event === "dynamic_tools_unavailable" ||
+      event.event === "dynamic_tool_call_completed" ||
+      event.event === "unsupported_tool_call"
+    ) {
+      this.logger.info(
+        {
+          issue_id: issueId,
+          issue_identifier: entry.identifier,
+          event: event.event,
+          message: event.message ?? null,
+          raw: event.raw ?? null
+        },
+        "tool_event"
+      );
+    }
+
+    if (isTerminalSessionEvent(event.event)) {
+      this.logger.info(
+        {
+          issue_id: issueId,
+          issue_identifier: entry.identifier,
+          event: event.event,
+          turn_id: event.turnId ?? entry.session.turnId,
+          message: event.message ?? null
+        },
+        "turn_event"
+      );
     }
 
     if (event.usage) {
@@ -488,6 +529,21 @@ export class Orchestrator {
     tracking.workspacePath = result.workspacePath || tracking.workspacePath;
     tracking.lastError = result.error;
     tracking.currentRetryAttempt = null;
+
+    this.logger.info(
+      {
+        issue_id: issueId,
+        issue_identifier: result.issue.identifier,
+        attempt: result.attempt,
+        status: result.status,
+        turn_count: result.turnCount,
+        error: result.error,
+        workspace_path: result.workspacePath || null,
+        last_event: entry.session.lastCodexEvent,
+        last_message: entry.session.lastCodexMessage
+      },
+      "dispatch_finished"
+    );
 
     if (entry.cancellation) {
       if (entry.cancellation.cleanupWorkspace && result.issue.identifier) {
@@ -560,6 +616,18 @@ export class Orchestrator {
     this.retryAttempts.set(issue.id, { entry, timer });
     this.claimed.add(issue.id);
 
+    this.logger.info(
+      {
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        attempt,
+        delay_ms: delayMs,
+        continuation,
+        error
+      },
+      continuation ? "continuation_scheduled" : "retry_scheduled"
+    );
+
     const tracking = this.ensureIssueTracking(issue);
     tracking.restartCount += 1;
     tracking.currentRetryAttempt = attempt;
@@ -614,6 +682,7 @@ export class Orchestrator {
       return;
     }
 
+    this.claimed.delete(issueId);
     if (this.shouldDispatch(issue)) {
       this.dispatchIssue(issue, retryState.entry.attempt);
       return;
@@ -710,6 +779,7 @@ export class Orchestrator {
     const activeSeconds = [...this.running.values()].reduce((total, entry) => total + (Date.now() - entry.startedAtMs) / 1000, 0);
     return this.codexTotals.secondsRunning + activeSeconds;
   }
+
 }
 
 function emptySessionSnapshot(): LiveSessionSnapshot {
@@ -755,4 +825,13 @@ function sortIssuesForDispatch(issues: Issue[]): Issue[] {
 
     return left.identifier.localeCompare(right.identifier);
   });
+}
+
+function isTerminalSessionEvent(eventName: string): boolean {
+  return (
+    eventName === "turn_completed" ||
+    eventName === "turn_failed" ||
+    eventName === "turn_cancelled" ||
+    eventName === "turn_input_required"
+  );
 }

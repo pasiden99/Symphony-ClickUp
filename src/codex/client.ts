@@ -3,7 +3,9 @@ import { once } from "node:events";
 
 import type { Logger } from "pino";
 
+import type { DynamicToolHandler, DynamicToolSpec } from "./dynamic-tools.js";
 import { SymphonyError } from "../errors.js";
+import { resolveLoginShell } from "../shell.js";
 import type { CodexConfig, LiveSessionEvent } from "../types.js";
 import { createDeferred, nowIso } from "../utils.js";
 
@@ -20,6 +22,13 @@ interface PendingRequest {
 interface ActiveTurn {
   deferred: ReturnType<typeof createDeferred<CodexTurnResult>>;
   timeout: NodeJS.Timeout;
+}
+
+type DynamicToolRegistrationField = "dynamicTools" | "dynamic_tools" | "tools";
+
+interface ThreadStartOutcome {
+  response: unknown;
+  registrationField: DynamicToolRegistrationField | null;
 }
 
 export interface StartSessionOptions {
@@ -41,12 +50,16 @@ export interface CodexTurnResult {
 export class CodexAppServerClient {
   private readonly logger: Logger;
 
-  constructor(private readonly config: CodexConfig, logger: Logger) {
+  constructor(
+    private readonly config: CodexConfig,
+    logger: Logger,
+    private readonly dynamicToolHandler: DynamicToolHandler | null = null
+  ) {
     this.logger = logger.child({ component: "codex_app_server" });
   }
 
   async startSession(options: StartSessionOptions): Promise<CodexSession> {
-    return CodexSession.start(this.config, this.logger, options);
+    return CodexSession.start(this.config, this.logger, options, this.dynamicToolHandler);
   }
 }
 
@@ -56,10 +69,13 @@ export class CodexSession {
   private readonly pendingRequests = new Map<JsonRpcId, PendingRequest>();
   private readonly stderrChunks: string[] = [];
   private readonly onEvent: (event: LiveSessionEvent) => void;
+  private readonly dynamicToolHandler: DynamicToolHandler | null;
+  private readonly toolSpecs: DynamicToolSpec[];
   private nextId = 1;
   private stdoutBuffer = "";
   private activeTurn: ActiveTurn | null = null;
   private pendingTurnOutcome: CodexTurnResult | SymphonyError | null = null;
+  private dynamicToolRegistrationField: DynamicToolRegistrationField | null = null;
   private closed = false;
   private threadId: string | null = null;
   private turnId: string | null = null;
@@ -69,24 +85,28 @@ export class CodexSession {
     logger: Logger,
     child: ChildProcessWithoutNullStreams,
     readonly workspacePath: string,
-    onEvent: (event: LiveSessionEvent) => void
+    onEvent: (event: LiveSessionEvent) => void,
+    dynamicToolHandler: DynamicToolHandler | null
   ) {
     this.child = child;
     this.onEvent = onEvent;
+    this.dynamicToolHandler = dynamicToolHandler;
+    this.toolSpecs = dynamicToolHandler?.listTools() ?? [];
     this.logger = logger.child({ workspace_path: workspacePath, pid: child.pid ?? null });
   }
 
   static async start(
     config: CodexConfig,
     logger: Logger,
-    options: StartSessionOptions
+    options: StartSessionOptions,
+    dynamicToolHandler: DynamicToolHandler | null
   ): Promise<CodexSession> {
-    const child = spawn("bash", ["-lc", config.command], {
+    const child = spawn(resolveLoginShell(), ["-c", config.command], {
       cwd: options.workspacePath,
       stdio: ["pipe", "pipe", "pipe"]
     });
 
-    const session = new CodexSession(config, logger, child, options.workspacePath, options.onEvent);
+    const session = new CodexSession(config, logger, child, options.workspacePath, options.onEvent, dynamicToolHandler);
     session.startReaders();
     await session.initialize();
     return session;
@@ -148,7 +168,7 @@ export class CodexSession {
       if (pendingOutcome instanceof SymphonyError) {
         this.failActiveTurn(pendingOutcome);
       } else {
-        this.completeActiveTurn(pendingOutcome);
+        this.completeActiveTurn(this.resolveTurnOutcome(pendingOutcome));
       }
     }
 
@@ -199,18 +219,70 @@ export class CodexSession {
         name: "symphony",
         version: "0.1.0"
       },
-      capabilities: {}
+      capabilities: {
+        experimentalApi: true
+      }
     });
 
     this.notify("initialized", {});
 
-    const threadResult = await this.request("thread/start", {
+    const threadStart = await this.startThread();
+
+    this.threadId = extractThreadId(threadStart.response);
+    this.dynamicToolRegistrationField = threadStart.registrationField;
+    if (this.toolSpecs.length > 0) {
+      this.emit({
+        event: this.dynamicToolRegistrationField ? "dynamic_tools_advertised" : "dynamic_tools_unavailable",
+        message: this.dynamicToolRegistrationField,
+        raw: {
+          registrationField: this.dynamicToolRegistrationField,
+          toolCount: this.toolSpecs.length
+        }
+      });
+    }
+  }
+
+  private async startThread(): Promise<ThreadStartOutcome> {
+    const baseParams: Record<string, unknown> = {
       approvalPolicy: this.config.approvalPolicy,
       sandbox: this.config.threadSandbox,
-      cwd: this.workspacePath
-    });
+      cwd: this.workspacePath,
+      experimentalRawEvents: false,
+      persistExtendedHistory: false
+    };
 
-    this.threadId = extractThreadId(threadResult);
+    if (this.toolSpecs.length === 0) {
+      return {
+        response: await this.request("thread/start", baseParams),
+        registrationField: null
+      };
+    }
+
+    for (const registrationField of ["dynamicTools", "dynamic_tools", "tools"] as const) {
+      try {
+        return {
+          response: await this.request("thread/start", {
+            ...baseParams,
+            [registrationField]: this.toolSpecs
+          }),
+          registrationField
+        };
+      } catch (error) {
+        this.logger.warn(
+          {
+            registration_field: registrationField,
+            tool_count: this.toolSpecs.length,
+            error: error instanceof Error ? error.message : String(error)
+          },
+          "thread_start_with_dynamic_tools_failed"
+        );
+      }
+    }
+
+    return {
+      response: await this.request("thread/start", baseParams),
+      registrationField: null
+    };
   }
 
   private startReaders(): void {
@@ -244,8 +316,12 @@ export class CodexSession {
         return;
       }
 
+      const stderrSummary = summarizeStderr(this.stderrChunks);
       this.failCurrentWork(
-        new SymphonyError("port_exit", `Codex process exited with code ${code ?? "null"} signal ${signal ?? "null"}`)
+        new SymphonyError(
+          "port_exit",
+          `Codex process exited with code ${code ?? "null"} signal ${signal ?? "null"}${stderrSummary ? `: ${stderrSummary}` : ""}`
+        )
       );
     });
   }
@@ -356,10 +432,7 @@ export class CodexSession {
     if (normalizedMethod.includes("requestuserinput")) {
       this.writeMessage({
         id,
-        result: {
-          success: false,
-          error: "turn_input_required"
-        }
+        result: buildToolRequestUserInputResponse(params)
       });
       this.emit({
         event: "turn_input_required",
@@ -371,12 +444,26 @@ export class CodexSession {
     }
 
     if (normalizedMethod.includes("tool/call")) {
+      const toolResponse = await this.handleDynamicToolCall(params);
+      if (toolResponse) {
+        this.writeMessage({
+          id,
+          result: toolResponse
+        });
+        this.emit({
+          event: "dynamic_tool_call_completed",
+          message: method,
+          raw: {
+            params,
+            success: toolResponse.success
+          }
+        });
+        return;
+      }
+
       this.writeMessage({
         id,
-        result: {
-          success: false,
-          error: "unsupported_tool_call"
-        }
+        result: unsupportedToolCallResult()
       });
       this.emit({
         event: "unsupported_tool_call",
@@ -393,6 +480,25 @@ export class CodexSession {
         error: "unsupported_request"
       }
     });
+  }
+
+  private async handleDynamicToolCall(params: unknown): Promise<Record<string, unknown> | null> {
+    if (!this.dynamicToolHandler || !params || typeof params !== "object" || Array.isArray(params)) {
+      return null;
+    }
+
+    const tool = (params as { tool?: unknown }).tool;
+    const args = (params as { arguments?: unknown }).arguments;
+    if (typeof tool !== "string" || tool.trim() === "") {
+      return null;
+    }
+
+    const result = await this.dynamicToolHandler.callTool(tool, args);
+    if (!result) {
+      return null;
+    }
+
+    return result as unknown as Record<string, unknown>;
   }
 
   private handleNotification(method: string, params: unknown, raw: unknown): void {
@@ -459,12 +565,14 @@ export class CodexSession {
   }
 
   private completeActiveTurn(result: CodexTurnResult): void {
+    const resolvedResult = this.resolveTurnOutcome(result);
+
     if (!this.activeTurn) {
-      this.pendingTurnOutcome = result;
+      this.pendingTurnOutcome = resolvedResult;
       return;
     }
 
-    this.activeTurn.deferred.resolve(result);
+    this.activeTurn.deferred.resolve(resolvedResult);
   }
 
   private failActiveTurn(error: SymphonyError): void {
@@ -484,6 +592,17 @@ export class CodexSession {
     }
     this.pendingRequests.clear();
     this.failActiveTurn(error);
+  }
+
+  private resolveTurnOutcome(result: CodexTurnResult): CodexTurnResult {
+    if (result.turnId !== "unknown" || !this.turnId) {
+      return result;
+    }
+
+    return {
+      ...result,
+      turnId: this.turnId
+    };
   }
 }
 
@@ -511,6 +630,18 @@ function extractTurnId(result: unknown): string {
   }
 
   throw new SymphonyError("response_error", "Codex turn/start response did not include result.turn.id");
+}
+
+function unsupportedToolCallResult(): Record<string, unknown> {
+  return {
+    success: false,
+    contentItems: [
+      {
+        type: "inputText",
+        text: JSON.stringify({ error: "unsupported_tool_call" })
+      }
+    ]
+  };
 }
 
 function extractMessage(value: unknown): string | null {
@@ -637,4 +768,54 @@ function readNumericField(value: Record<string, unknown>, keys: string[]): numbe
 
 function truncateMessage(value: string): string {
   return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+}
+
+function summarizeStderr(chunks: string[]): string | null {
+  const combined = chunks.join("").trim();
+  if (combined === "") {
+    return null;
+  }
+
+  const compact = combined.replace(/\s+/g, " ").trim();
+  return truncateMessage(compact);
+}
+
+function buildToolRequestUserInputResponse(params: unknown): Record<string, unknown> {
+  const questions = extractRequestUserInputQuestions(params);
+  if (questions.length === 0) {
+    return { answers: {} };
+  }
+
+  return {
+    answers: Object.fromEntries(
+      questions.map((questionId) => [
+        questionId,
+        {
+          answers: []
+        }
+      ])
+    )
+  };
+}
+
+function extractRequestUserInputQuestions(params: unknown): string[] {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return [];
+  }
+
+  const rawQuestions = (params as { questions?: unknown }).questions;
+  if (!Array.isArray(rawQuestions)) {
+    return [];
+  }
+
+  return rawQuestions
+    .map((question) => {
+      if (!question || typeof question !== "object" || Array.isArray(question)) {
+        return null;
+      }
+
+      const questionId = (question as { id?: unknown }).id;
+      return typeof questionId === "string" && questionId.trim() !== "" ? questionId : null;
+    })
+    .filter((questionId): questionId is string => questionId !== null);
 }

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import type { Logger } from "pino";
 
 import { SymphonyError } from "./errors.js";
+import { resolveLoginShell } from "./shell.js";
 import type { EffectiveConfig, WorkspaceInfo } from "./types.js";
 import { sanitizeWorkspaceKey } from "./utils.js";
 
@@ -149,7 +150,7 @@ async function executeShellScript(options: ExecuteShellScriptOptions): Promise<v
   const { script, cwd, timeoutMs } = options;
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("bash", ["-lc", script], {
+    const child = spawn(resolveLoginShell(), ["-c", script], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"]
     });

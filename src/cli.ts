@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import { loadProjectEnv } from "./env.js";
 import { resolveWorkflowPath } from "./workflow.js";
 import { SymphonyService } from "./service.js";
 
 async function main(): Promise<void> {
   const { workflowArg, port } = parseArgs(process.argv.slice(2));
   const workflowPath = resolveWorkflowPath(workflowArg, process.cwd());
+  await loadProjectEnv({ workflowPath });
   const service = new SymphonyService({
     workflowPath,
     portOverride: port
@@ -22,16 +24,39 @@ async function main(): Promise<void> {
     return;
   }
 
+  let shutdownPromise: Promise<void> | null = null;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
-    logger.info({ signal }, "symphony_stopping");
-    await service.stop();
-    process.exit(0);
+    if (shutdownPromise) {
+      return shutdownPromise;
+    }
+
+    shutdownPromise = (async () => {
+      const forceExitTimer = setTimeout(() => {
+        logger.error({ signal }, "symphony_force_exit");
+        process.exit(1);
+      }, 5_000);
+      forceExitTimer.unref();
+
+      logger.info({ signal }, "symphony_stopping");
+
+      try {
+        await service.stop();
+        clearTimeout(forceExitTimer);
+        process.exit(0);
+      } catch (error) {
+        clearTimeout(forceExitTimer);
+        logger.error({ signal, err: error instanceof Error ? error.message : String(error) }, "symphony_stop_failed");
+        process.exit(1);
+      }
+    })();
+
+    return shutdownPromise;
   };
 
-  process.on("SIGINT", () => {
+  process.once("SIGINT", () => {
     void shutdown("SIGINT");
   });
-  process.on("SIGTERM", () => {
+  process.once("SIGTERM", () => {
     void shutdown("SIGTERM");
   });
 }

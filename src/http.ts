@@ -1,20 +1,29 @@
 import Fastify from "fastify";
 import type { Logger } from "pino";
 
-import { Orchestrator } from "./orchestrator.js";
+import type { IssueRuntimeSnapshot, RuntimeSnapshot } from "./types.js";
 
-export async function startHttpServer(
-  orchestrator: Orchestrator,
-  logger: Logger,
-  port: number
-): Promise<ReturnType<typeof Fastify>> {
+export interface HttpRuntimeSource {
+  getRuntimeSnapshot(): RuntimeSnapshot;
+  getIssueSnapshot(issueIdentifier: string): IssueRuntimeSnapshot | null;
+  requestRefresh(): Promise<{ queued: boolean; coalesced: boolean }>;
+}
+
+export function createHttpServer(orchestrator: HttpRuntimeSource, logger: Logger): ReturnType<typeof Fastify> {
   const app = Fastify({
     loggerInstance: logger.child({ component: "http_server" })
   });
 
-  app.get("/", async () => {
+  app.get("/", async (_request, reply) => {
     const snapshot = orchestrator.getRuntimeSnapshot();
+    reply.type("text/html; charset=utf-8");
     return renderDashboard(snapshot);
+  });
+
+  app.get("/favicon.ico", async (_request, reply) => {
+    reply.code(204);
+    reply.type("image/x-icon");
+    return "";
   });
 
   app.get("/api/v1/state", async () => orchestrator.getRuntimeSnapshot());
@@ -45,6 +54,16 @@ export async function startHttpServer(
     };
   });
 
+  return app;
+}
+
+export async function startHttpServer(
+  orchestrator: HttpRuntimeSource,
+  logger: Logger,
+  port: number
+): Promise<ReturnType<typeof Fastify>> {
+  const app = createHttpServer(orchestrator, logger);
+
   await app.listen({
     host: "127.0.0.1",
     port
@@ -53,7 +72,7 @@ export async function startHttpServer(
   return app;
 }
 
-function renderDashboard(snapshot: ReturnType<Orchestrator["getRuntimeSnapshot"]>): string {
+function renderDashboard(snapshot: RuntimeSnapshot): string {
   const runningRows =
     snapshot.running.length === 0
       ? `<tr><td colspan="6">No active runs</td></tr>`

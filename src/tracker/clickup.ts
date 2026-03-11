@@ -1,3 +1,4 @@
+import path from "node:path";
 import { URL } from "node:url";
 
 import type { Logger } from "pino";
@@ -252,9 +253,26 @@ export class ClickUpTrackerClient implements TrackerClient {
     pathname: string,
     query: Record<string, string | string[] | undefined>
   ): Promise<T> {
-    const url = new URL(pathname, normalizeBaseUrl(this.config.endpoint));
+    const response = await this.request(pathname, { method: "GET", query });
 
-    for (const [key, rawValue] of Object.entries(query)) {
+    try {
+      return (await response.json()) as T;
+    } catch (error) {
+      throw new SymphonyError("clickup_unknown_payload", `ClickUp returned invalid JSON for ${pathname}`, undefined, error);
+    }
+  }
+
+  private async request(
+    pathname: string,
+    options: {
+      method: "GET" | "PUT";
+      query?: Record<string, string | string[] | undefined>;
+      body?: Record<string, unknown>;
+    }
+  ): Promise<Response> {
+    const url = buildApiUrl(this.config.endpoint, pathname);
+
+    for (const [key, rawValue] of Object.entries(options.query ?? {})) {
       if (rawValue === undefined) {
         continue;
       }
@@ -274,12 +292,21 @@ export class ClickUpTrackerClient implements TrackerClient {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(url, {
+      const requestInit: RequestInit = {
+        method: options.method,
         headers: {
           Authorization: this.config.apiKey,
-          Accept: "application/json"
+          Accept: "application/json",
+          ...(options.body ? { "Content-Type": "application/json" } : {})
         },
         signal
+      };
+      if (options.body) {
+        requestInit.body = JSON.stringify(options.body);
+      }
+
+      response = await this.fetchImpl(url, {
+        ...requestInit
       });
     } catch (error) {
       throw new SymphonyError("clickup_api_request", `ClickUp request failed for ${url.pathname}`, undefined, error);
@@ -293,6 +320,7 @@ export class ClickUpTrackerClient implements TrackerClient {
 
     this.logger.debug(
       {
+        method: options.method,
         path: url.pathname,
         status: response.status,
         duration_ms: Date.now() - startedAt,
@@ -309,21 +337,44 @@ export class ClickUpTrackerClient implements TrackerClient {
     }
 
     if (!response.ok) {
-      throw new SymphonyError("clickup_api_status", `ClickUp responded with ${response.status} for ${url.pathname}`, {
-        status: response.status
-      });
+      throw this.toStatusError(url.pathname, response.status, limitHeaders);
     }
 
-    try {
-      return (await response.json()) as T;
-    } catch (error) {
-      throw new SymphonyError("clickup_unknown_payload", `ClickUp returned invalid JSON for ${url.pathname}`, undefined, error);
+    return response;
+  }
+
+  private toStatusError(
+    pathname: string,
+    status: number,
+    rateLimit: { limit: string | null; remaining: string | null; reset: string | null }
+  ): SymphonyError {
+    const details = {
+      status,
+      rateLimit,
+      path: pathname
+    };
+
+    if (status === 404 && pathname.endsWith(`/team/${encodeURIComponent(this.config.workspaceId)}/task`)) {
+      return new SymphonyError(
+        "clickup_invalid_workspace",
+        `ClickUp returned 404 for ${pathname}. Verify tracker.workspace_id is the ClickUp Workspace/team ID from API v2, not a Space or List ID.`,
+        details
+      );
     }
+
+    return new SymphonyError("clickup_api_status", `ClickUp responded with ${status} for ${pathname}`, details);
   }
 }
 
 function normalizeBaseUrl(endpoint: string): string {
   return endpoint.endsWith("/") ? endpoint : `${endpoint}/`;
+}
+
+function buildApiUrl(endpoint: string, pathname: string): URL {
+  const url = new URL(normalizeBaseUrl(endpoint));
+  const normalizedPath = pathname.replace(/^\/+/, "");
+  url.pathname = path.posix.join(url.pathname, normalizedPath);
+  return url;
 }
 
 function normalizeOptionalString(value: unknown): string | null {
