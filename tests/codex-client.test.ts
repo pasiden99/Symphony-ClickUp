@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { CodexAppServerClient } from "../src/codex/client.js";
+import { CodexAppServerClient, materializeTurnSandboxPolicy } from "../src/codex/client.js";
 import type { DynamicToolHandler } from "../src/codex/dynamic-tools.js";
 import { createLogger } from "../src/logging.js";
 
@@ -188,5 +188,33 @@ describe("CodexAppServerClient", () => {
 
     expect(result.status).toBe("completed");
     expect(result.turnId).toBe("turn-legacy");
+  });
+
+  test("materializes workspaceWrite sandbox policy with git metadata writes and network access", () => {
+    const policy = materializeTurnSandboxPolicy(
+      {
+        type: "workspaceWrite",
+        writable_roots: [".", ".git"],
+        read_only_access: {
+          type: "restricted",
+          include_platform_defaults: false,
+          readable_roots: [".git"]
+        }
+      },
+      "/tmp/workspaces/CU-0"
+    );
+
+    expect(policy).toEqual({
+      type: "workspaceWrite",
+      writableRoots: ["/tmp/workspaces/CU-0", "/tmp/workspaces/CU-0/.git"],
+      readOnlyAccess: {
+        type: "restricted",
+        includePlatformDefaults: false,
+        readableRoots: ["/tmp/workspaces/CU-0/.git"]
+      },
+      networkAccess: true,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { buildContinuationPrompt, renderIssuePrompt } from "../src/prompt.js";
+import { buildContinuationPrompt, prependEnvironmentContext, renderIssuePrompt } from "../src/prompt.js";
 import type { Issue } from "../src/types.js";
 
 describe("prompt helpers", () => {
@@ -16,6 +16,16 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("raw ClickUp task ID 868ht62zr");
     expect(prompt).toContain("Do not use CU-0 as a ClickUp task ID");
     expect(prompt).toContain("Do not call any mcp__clickup__* tools.");
+  });
+
+  test("prepends environment notices when blockers are detected", () => {
+    const prompt = prependEnvironmentContext("Finish the task.", [
+      "GitHub CLI authentication is unavailable for PR work in this environment: The token in default is invalid."
+    ]);
+
+    expect(prompt).toContain("Environment preflight:");
+    expect(prompt).toContain("The token in default is invalid.");
+    expect(prompt).toContain("Finish the task.");
   });
 });
 

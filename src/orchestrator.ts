@@ -450,6 +450,7 @@ export class Orchestrator {
     }
 
     if (
+      event.event === "environment_preflight" ||
       event.event === "dynamic_tools_advertised" ||
       event.event === "dynamic_tools_unavailable" ||
       event.event === "dynamic_tool_call_completed" ||

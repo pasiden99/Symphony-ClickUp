@@ -38,6 +38,19 @@ export function buildContinuationPrompt(issue: Issue, turnNumber: number, maxTur
   ].join("\n");
 }
 
+export function prependEnvironmentContext(prompt: string, notices: string[]): string {
+  if (notices.length === 0) {
+    return prompt;
+  }
+
+  return [
+    "Environment preflight:",
+    ...notices.map((notice) => `- ${notice}`),
+    "",
+    prompt
+  ].join("\n");
+}
+
 function serializeIssue(issue: Issue): Record<string, unknown> {
   return {
     id: issue.id,

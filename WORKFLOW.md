@@ -38,6 +38,14 @@ codex:
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
+    writable_roots:
+      - .
+      - .git
+    read_only_access:
+      type: fullAccess
+    network_access: true
+    exclude_tmpdir_env_var: false
+    exclude_slash_tmp: false
 server:
   port: 3000
 ---

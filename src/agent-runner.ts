@@ -1,12 +1,14 @@
+import { spawn } from "node:child_process";
+
 import type { Logger } from "pino";
 
 import { isActiveState } from "./config.js";
 import { CodexAppServerClient, type CodexTurnResult } from "./codex/client.js";
 import { ClickUpDynamicToolHandler } from "./codex/dynamic-tools.js";
 import { SymphonyError } from "./errors.js";
-import { buildContinuationPrompt, renderIssuePrompt } from "./prompt.js";
+import { buildContinuationPrompt, prependEnvironmentContext, renderIssuePrompt } from "./prompt.js";
 import type { EffectiveConfig, Issue, LiveSessionEvent, RunAttemptResult, TrackerClient } from "./types.js";
-import { formatError } from "./utils.js";
+import { formatError, nowIso } from "./utils.js";
 import { WorkspaceManager } from "./workspace.js";
 
 export interface RunAttemptOptions {
@@ -15,6 +17,18 @@ export interface RunAttemptOptions {
   workflowPromptTemplate: string;
   onEvent: (event: LiveSessionEvent) => void;
   signal?: AbortSignal;
+}
+
+interface CliCapabilityProbe {
+  available: boolean;
+  ok: boolean;
+  summary: string;
+  details: string | null;
+}
+
+interface EnvironmentPreflight {
+  notices: string[];
+  githubCli: CliCapabilityProbe;
 }
 
 export class AgentRunner {
@@ -72,6 +86,13 @@ export class AgentRunner {
       await this.workspaceManager.runHook("beforeRun", workspace.path);
 
       this.workspaceManager.assertInsideWorkspaceRoot(workspace.path);
+      const environmentPreflight = await collectEnvironmentPreflight(workspace.path);
+      onEvent({
+        event: "environment_preflight",
+        timestamp: nowIso(),
+        message: environmentPreflight.githubCli.summary,
+        raw: environmentPreflight
+      });
 
       const codexClient = new CodexAppServerClient(
         this.config.codex,
@@ -93,10 +114,12 @@ export class AgentRunner {
 
       while (turnCount < this.config.agent.maxTurns) {
         turnCount += 1;
-        const prompt =
+        const basePrompt =
           turnCount === 1
             ? await renderIssuePrompt(workflowPromptTemplate, finalIssue, attempt)
             : buildContinuationPrompt(finalIssue, turnCount, this.config.agent.maxTurns);
+        const prompt =
+          turnCount === 1 ? prependEnvironmentContext(basePrompt, environmentPreflight.notices) : basePrompt;
 
         const turnResult = await raceAbort(
           session.runTurn({
@@ -195,4 +218,115 @@ function mapTurnStatus(result: CodexTurnResult): RunAttemptResult["status"] {
   }
 
   return "failed";
+}
+
+async function collectEnvironmentPreflight(workspacePath: string): Promise<EnvironmentPreflight> {
+  const githubCli = await probeGithubCliAuth(workspacePath);
+  const notices: string[] = [];
+
+  if (!githubCli.available) {
+    notices.push("GitHub CLI (`gh`) is not installed in this environment.");
+  } else if (!githubCli.ok) {
+    notices.push(
+      `GitHub CLI authentication is unavailable for PR work in this environment: ${githubCli.summary}`
+    );
+    notices.push("Do not burn turns repeatedly retrying `gh` commands in this session.");
+    notices.push("If implementation completes, record the blocker in ClickUp and stop at the blocker.");
+  }
+
+  return {
+    notices,
+    githubCli
+  };
+}
+
+async function probeGithubCliAuth(workspacePath: string): Promise<CliCapabilityProbe> {
+  try {
+    const { code, stdout, stderr } = await runProcess("gh", ["auth", "status"], workspacePath);
+    const details = [stdout, stderr].filter((chunk) => chunk.trim() !== "").join("\n").trim() || null;
+
+    if (code === 0) {
+      return {
+        available: true,
+        ok: true,
+        summary: "GitHub CLI authentication is available.",
+        details
+      };
+    }
+
+    return {
+      available: true,
+      ok: false,
+      summary: summarizeCliFailure(details) ?? "GitHub CLI authentication is unavailable.",
+      details
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("ENOENT")) {
+      return {
+        available: false,
+        ok: false,
+        summary: "GitHub CLI (`gh`) is not installed.",
+        details: null
+      };
+    }
+
+    return {
+      available: true,
+      ok: false,
+      summary: `GitHub CLI probe failed: ${message}`,
+      details: null
+    };
+  }
+}
+
+async function runProcess(
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function summarizeCliFailure(details: string | null): string | null {
+  if (!details) {
+    return null;
+  }
+
+  const trimmed = details.trim();
+  const preferredLine =
+    trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(
+        (line) =>
+          line !== "" &&
+          !line.startsWith("github.com") &&
+          !line.startsWith("X Failed to log in") &&
+          !line.startsWith("- Active account:") &&
+          !line.startsWith("- To re-authenticate") &&
+          !line.startsWith("- To forget about")
+      ) ?? trimmed.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "");
+
+  return preferredLine ?? null;
 }

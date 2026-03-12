@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import path from "node:path";
 
 import type { Logger } from "pino";
 
@@ -144,7 +145,7 @@ export class CodexSession {
       cwd: this.workspacePath,
       title: options.title,
       approvalPolicy: this.config.approvalPolicy,
-      sandboxPolicy: this.config.turnSandboxPolicy
+      sandboxPolicy: materializeTurnSandboxPolicy(this.config.turnSandboxPolicy, this.workspacePath)
     });
 
     this.turnId = extractTurnId(response);
@@ -778,6 +779,125 @@ function summarizeStderr(chunks: string[]): string | null {
 
   const compact = combined.replace(/\s+/g, " ").trim();
   return truncateMessage(compact);
+}
+
+function firstDefined<T>(...values: T[]): T | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+export function materializeTurnSandboxPolicy(policy: unknown, workspacePath: string): unknown {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    return policy;
+  }
+
+  const raw = policy as Record<string, unknown>;
+  const type = typeof raw.type === "string" ? raw.type : null;
+  if (type === "workspaceWrite" || type === "workspace-write") {
+    const writableRoots = normalizeWritableRoots(
+      firstDefined(raw.writableRoots, raw.writable_roots),
+      workspacePath
+    );
+
+    return {
+      type: "workspaceWrite",
+      writableRoots,
+      readOnlyAccess: normalizeReadOnlyAccess(
+        firstDefined(raw.readOnlyAccess, raw.read_only_access),
+        workspacePath
+      ),
+      networkAccess: normalizeWorkspaceWriteNetworkAccess(
+        firstDefined(raw.networkAccess, raw.network_access)
+      ),
+      excludeTmpdirEnvVar: normalizeBoolean(
+        firstDefined(raw.excludeTmpdirEnvVar, raw.exclude_tmpdir_env_var),
+        false
+      ),
+      excludeSlashTmp: normalizeBoolean(firstDefined(raw.excludeSlashTmp, raw.exclude_slash_tmp), false)
+    };
+  }
+
+  if (type === "danger-full-access") {
+    return { type: "dangerFullAccess" };
+  }
+
+  if (type === "readOnly" || type === "read-only") {
+    return {
+      type: "readOnly",
+      access: normalizeReadOnlyAccess(firstDefined(raw.access, raw.readOnlyAccess, raw.read_only_access), workspacePath),
+      networkAccess: normalizeBoolean(firstDefined(raw.networkAccess, raw.network_access), false)
+    };
+  }
+
+  return policy;
+}
+
+function normalizeWritableRoots(rawRoots: unknown, workspacePath: string): string[] {
+  const normalized = new Set<string>();
+  const add = (candidate: string) => {
+    const resolved = path.isAbsolute(candidate) ? path.normalize(candidate) : path.resolve(workspacePath, candidate);
+    normalized.add(resolved);
+  };
+
+  if (Array.isArray(rawRoots)) {
+    for (const root of rawRoots) {
+      if (typeof root === "string" && root.trim() !== "") {
+        add(root.trim());
+      }
+    }
+  }
+
+  add(workspacePath);
+  add(path.join(workspacePath, ".git"));
+  return [...normalized];
+}
+
+function normalizeReadOnlyAccess(rawAccess: unknown, workspacePath: string): Record<string, unknown> {
+  if (!rawAccess || typeof rawAccess !== "object" || Array.isArray(rawAccess)) {
+    return { type: "fullAccess" };
+  }
+
+  const access = rawAccess as Record<string, unknown>;
+  const type = typeof access.type === "string" ? access.type : null;
+  if (type === "restricted") {
+    const readableRoots = Array.isArray(firstDefined(access.readableRoots, access.readable_roots))
+      ? (firstDefined(access.readableRoots, access.readable_roots) as unknown[])
+          .filter((root): root is string => typeof root === "string" && root.trim() !== "")
+          .map((root) => (path.isAbsolute(root) ? path.normalize(root) : path.resolve(workspacePath, root)))
+      : [];
+
+    return {
+      type: "restricted",
+      includePlatformDefaults: normalizeBoolean(
+        firstDefined(access.includePlatformDefaults, access.include_platform_defaults),
+        true
+      ),
+      readableRoots
+    };
+  }
+
+  return { type: "fullAccess" };
+}
+
+function normalizeWorkspaceWriteNetworkAccess(value: unknown): boolean {
+  if (value === "enabled") {
+    return true;
+  }
+
+  if (value === "restricted") {
+    return false;
+  }
+
+  return normalizeBoolean(value, true);
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function buildToolRequestUserInputResponse(params: unknown): Record<string, unknown> {
