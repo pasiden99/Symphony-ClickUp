@@ -40,6 +40,7 @@ Typical flow:
 - A TypeScript implementation of Symphony.
 - A ClickUp tracker client.
 - A local HTML dashboard and JSON API.
+- Internal implementation docs: [`docs/README.md`](./docs/README.md)
 - An example workflow file: [`WORKFLOW-EXAMPLE.md`](./WORKFLOW-EXAMPLE.md)
 - A sample environment file: [`.env.example`](./.env.example)
 
