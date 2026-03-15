@@ -30,11 +30,11 @@ Suite map:
 | --- | --- |
 | `tests/clickup-dynamic-tools.test.ts` | Task reads, updates, comments, API path construction, and current-issue identifier remapping for dynamic tools |
 | `tests/clickup-tracker.test.ts` | Paginated candidate fetches, blocker resolution, identifier normalization, and invalid workspace messaging |
-| `tests/codex-client.test.ts` | Session start, turn completion, request-user-input failure, dynamic tool calls, and sandbox policy normalization |
+| `tests/codex-client.test.ts` | Session start, turn completion, interactive-input failed-turn results, dynamic tool calls, and sandbox policy normalization |
 | `tests/config.test.ts` | Config defaults, env-backed values, and required ClickUp scope validation |
 | `tests/env.test.ts` | `.env` parsing, quoted values, inline comments, and `.env.local` precedence |
-| `tests/http.test.ts` | Dashboard HTML response shell and favicon suppression |
-| `tests/orchestrator.test.ts` | Dispatch eligibility, continuation retries, blocker gating, and failure retry behavior |
+| `tests/http.test.ts` | Dashboard HTML response shell, EventSource client bootstrap, favicon suppression, and SSE snapshot streaming |
+| `tests/orchestrator.test.ts` | Dispatch eligibility, continuation retries, blocker gating, blocked issue holding, snapshot notification coalescing, and failure retry behavior |
 | `tests/prompt.test.ts` | Prompt rendering, continuation prompt wording, and environment preflight prefixing |
 | `tests/shell.test.ts` | Login-shell selection and fallback |
 | `tests/workflow.test.ts` | Workflow YAML parsing and default path resolution |
@@ -66,7 +66,7 @@ The test tree does not export public runtime APIs, but it heavily exercises thes
 
 ## Failure Modes
 - There is no dedicated unit coverage for `src/service.ts`, `src/workspace.ts`, `src/logging.ts`, `src/errors.ts`, `src/utils.ts`, or `src/index.ts`.
-- The HTML dashboard renderer is only lightly tested.
+- The refresh route payload is still only lightly covered compared with the SSE path and dashboard shell.
 - Workflow reload behavior is covered indirectly through the service design, not through a service-level integration test.
 - Hook execution paths and workspace-root safety checks are not directly asserted in Vitest today.
 

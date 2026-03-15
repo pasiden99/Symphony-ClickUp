@@ -21,12 +21,12 @@ Annotated authored tree:
 ```text
 .
 ├── .env.example                          # Checked-in environment example used by setup docs and workflow examples.
-├── .gitignore                            # Git ignore rules for generated output, logs, and local env files.
+├── .gitignore                            # Git ignore rules for generated output, logs, local env files, and local `WORKFLOW.md`.
 ├── DROID_MEM_AGENT_INSTRUCTIONS.md       # Project guidance for droid-mem-enabled agents.
 ├── README.md                             # Operator-facing product, setup, and runtime usage guide.
 ├── SPEC.md                               # Small forwarding stub to the archived legacy spec under docs/reference/.
 ├── WORKFLOW-EXAMPLE.md                   # Example workflow contract with ClickUp + Codex settings.
-├── WORKFLOW.md                           # Local active workflow used when running Symphony in this checkout.
+├── WORKFLOW.md                           # Local active workflow used when running Symphony in this checkout; intentionally ignored by Git.
 ├── docs/
 │   ├── README.md                         # Documentation hub and reading order.
 │   ├── codebase-map.md                   # This file.
@@ -47,19 +47,19 @@ Annotated authored tree:
 ├── package-lock.json                     # Locked npm dependency graph for reproducible installs.
 ├── package.json                          # Package metadata, runtime dependencies, scripts, and CLI bin mapping.
 ├── src/
-│   ├── agent-runner.ts                   # One issue attempt: workspace prep, Codex session, turn loop, tracker refresh.
+│   ├── agent-runner.ts                   # One issue attempt: workspace prep, Codex session, turn loop, tracker refresh, and blocked-turn detection.
 │   ├── cli.ts                            # Command-line entrypoint and `--port` parsing.
 │   ├── config.ts                         # Workflow config resolution, defaults, and dispatch validation.
 │   ├── env.ts                            # `.env` and `.env.local` parsing and load precedence.
 │   ├── errors.ts                         # Shared `SymphonyError` type and error detail helpers.
-│   ├── http.ts                           # Fastify HTTP server, dashboard HTML, and JSON API routes.
+│   ├── http.ts                           # Fastify HTTP server, dashboard HTML, JSON API routes, and live SSE snapshot streaming.
 │   ├── index.ts                          # Public package barrel exporting `SymphonyService`.
 │   ├── logging.ts                        # Pino logger factory.
-│   ├── orchestrator.ts                   # Polling loop, reconciliation, claims, running state, and retry timers.
+│   ├── orchestrator.ts                   # Polling loop, reconciliation, claims, blocked-until-change state, retry timers, and snapshot listeners.
 │   ├── prompt.ts                         # Liquid prompt rendering and continuation prompt helpers.
 │   ├── service.ts                        # High-level lifecycle owner for startup, reload, shutdown, and HTTP server.
 │   ├── shell.ts                          # Login-shell resolution helper for hooks and Codex spawn.
-│   ├── types.ts                          # Shared domain, config, runtime snapshot, and tracker interfaces.
+│   ├── types.ts                          # Shared domain, config, runtime snapshot, tracker interfaces, and blocked-status shapes.
 │   ├── utils.ts                          # Small shared coercion, timing, path, and concurrency helpers.
 │   ├── workflow.ts                       # `WORKFLOW.md` path resolution, parsing, and file watching.
 │   ├── workspace.ts                      # Workspace creation, hook execution, cleanup, and root-safety checks.
@@ -71,11 +71,11 @@ Annotated authored tree:
 ├── tests/
 │   ├── clickup-dynamic-tools.test.ts     # Dynamic tool request/response behavior and task-id resolution rules.
 │   ├── clickup-tracker.test.ts           # ClickUp task fetching, pagination, blockers, and workspace-id errors.
-│   ├── codex-client.test.ts              # Codex session lifecycle, dynamic tools, and sandbox policy normalization.
+│   ├── codex-client.test.ts              # Codex session lifecycle, blocked-input behavior, dynamic tools, and sandbox policy normalization.
 │   ├── config.test.ts                    # Effective config defaults, env-backed values, and validation failures.
 │   ├── env.test.ts                       # Env parsing and precedence between `.env`, `.env.local`, and shell vars.
-│   ├── http.test.ts                      # Fastify dashboard and API basics.
-│   ├── orchestrator.test.ts              # Dispatch gating, continuation retries, and retry scheduling behavior.
+│   ├── http.test.ts                      # Fastify dashboard HTML, EventSource client bootstrap, and SSE stream behavior.
+│   ├── orchestrator.test.ts              # Dispatch gating, continuation retries, blocked issue holding, and snapshot notification behavior.
 │   ├── prompt.test.ts                    # Liquid prompt data, continuation wording, and environment notice prefixing.
 │   ├── shell.test.ts                     # Shell fallback logic.
 │   ├── workflow.test.ts                  # Workflow front matter parsing and default path resolution.
@@ -91,6 +91,7 @@ Generated or local-only paths that appear in this checkout:
 - `dist/`: compiled JavaScript output from `npm run build`.
 - `node_modules/`: installed npm dependencies.
 - `.env.local`: local secrets and machine-specific overrides, intentionally ignored by Git.
+- `WORKFLOW.md`: local runtime workflow file, intentionally ignored so operators can keep machine-specific state out of version control.
 - `.DS_Store`: macOS Finder metadata, not part of the authored project.
 
 ## Important Exports and Classes

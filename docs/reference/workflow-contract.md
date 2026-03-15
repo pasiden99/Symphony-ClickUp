@@ -1,7 +1,7 @@
 # Workflow Contract
 
 ## Purpose
-This page documents the repository-owned contract between Symphony and `WORKFLOW.md`, including YAML front matter, prompt rendering, environment-file loading, and the example files that operators are expected to copy and customize.
+This page documents the workflow contract Symphony expects at runtime, including YAML front matter, prompt rendering, environment-file loading, and the example files that operators are expected to copy and customize.
 
 ## Covered Paths
 - `WORKFLOW.md`
@@ -70,7 +70,7 @@ Template variables available to the prompt body:
 Current checked-in workflow artifacts:
 
 - `WORKFLOW-EXAMPLE.md` is the documented template intended for copying into a local `WORKFLOW.md`.
-- `WORKFLOW.md` in this checkout is a real configured workflow and should be treated as local runtime state rather than a generic example.
+- `WORKFLOW.md` in this checkout is a real configured workflow, should be treated as local runtime state rather than a generic example, and is intentionally ignored by Git.
 - `.env.example` documents the minimum env keys expected by the setup path in `README.md`.
 
 ## Important Exports and Classes

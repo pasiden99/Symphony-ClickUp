@@ -13,8 +13,8 @@ This page documents the core work engine of Symphony: how issues are selected, c
 
 | Path | Responsibility |
 | --- | --- |
-| `src/orchestrator.ts` | Poll ticks, dispatch eligibility, claim tracking, reconciliation, cancellation, retry scheduling, runtime snapshots |
-| `src/agent-runner.ts` | One issue attempt across workspace prep, environment preflight, Codex turns, and tracker refreshes |
+| `src/orchestrator.ts` | Poll ticks, dispatch eligibility, claim tracking, blocked-until-change handling, reconciliation, cancellation, retry scheduling, runtime snapshots, and snapshot listeners |
+| `src/agent-runner.ts` | One issue attempt across workspace prep, environment preflight, Codex turns, tracker refreshes, and blocked-turn classification |
 | `src/workspace.ts` | Workspace creation, root safety checks, hook execution, transient cleanup, and removal |
 | `src/prompt.ts` | Render first-turn prompts and generate continuation prompts for later turns |
 
@@ -45,12 +45,15 @@ This page documents the core work engine of Symphony: how issues are selected, c
    - refreshes the task state from ClickUp after each completed turn,
    - exits when the task is no longer active or the turn limit is reached.
 6. `handleSessionEvent()` in the orchestrator updates live session metadata, token totals, rate-limit telemetry, and recent issue events.
-7. `handleWorkerExit()` converts the attempt result into one of three scheduler outcomes:
+7. `handleWorkerExit()` converts the attempt result into one of four scheduler outcomes:
    - continuation retry after success,
    - exponential backoff retry after failure or stall,
+   - blocked-until-change after interactive input is required,
    - claim release after reconciliation-driven cancellation or non-retry terminal conditions.
-8. Retry timers call `onRetryTimer()`, which re-fetches active candidates, checks capacity again, and either redispatches or releases the claim.
-9. Workspace cleanup happens in two places:
+8. Blocked issues are stored in `blockedUntilChange`. `isBlockedPendingExternalChange()` prevents redispatch until the task state or `updatedAt` value changes in ClickUp.
+9. `subscribeRuntimeSnapshots()` lets the HTTP layer subscribe to debounced `RuntimeSnapshot` broadcasts when orchestration state changes.
+10. Retry timers call `onRetryTimer()`, which re-fetches active candidates, checks capacity again, and either redispatches or releases the claim.
+11. Workspace cleanup happens in two places:
    - on startup for already-terminal issues,
    - on reconciliation cancellation when a running issue becomes terminal and `cleanupWorkspace` is true.
 
@@ -67,6 +70,7 @@ Prompt behavior from `src/prompt.ts`:
 - `renderIssuePrompt()` renders the workflow body with strict Liquid semantics.
 - `buildContinuationPrompt()` intentionally forbids `mcp__clickup__*` usage and repeats the raw ClickUp task ID to keep continuation turns aligned with Symphony tooling.
 - `prependEnvironmentContext()` injects preflight notices, such as missing `gh` auth, only for the first turn.
+- `AgentRunner` now maps interactive-input failures into `RunAttemptResult.status = "blocked"` so the orchestrator can hold the issue instead of backing off and retrying immediately.
 
 ## Important Exports and Classes
 
@@ -96,6 +100,7 @@ Prompt behavior from `src/prompt.ts`:
 ## Failure Modes
 - Stalled runs are canceled when no Codex event arrives within `codex.stall_timeout_ms`.
 - Reconciliation can cancel a run if the issue becomes terminal or leaves an active state.
+- Interactive input requests no longer cause a retry storm; they intentionally move the issue into a blocked-until-change scheduler state.
 - `beforeRun` and `afterCreate` hook failures fail the attempt; `afterCreate` also removes the newly created directory.
 - `turn_timeout` from Codex becomes a `timed_out` attempt result.
 - If the post-turn ClickUp refresh cannot find the current task, the attempt fails rather than continuing on stale state.

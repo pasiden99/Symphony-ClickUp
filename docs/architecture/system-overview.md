@@ -41,15 +41,17 @@ End-to-end runtime flow:
    - renders the first prompt from `WORKFLOW.md`,
    - runs continuation turns until the task leaves an active state or `agent.maxTurns` is reached.
 7. `CodexSession` in `src/codex/client.ts` speaks line-delimited JSON to the Codex app-server process, advertises first-party dynamic tools if the server accepts them, and emits session events back to the orchestrator.
-8. The orchestrator converts session events into live runtime snapshots, token totals, rate-limit telemetry, and retry scheduling decisions.
-9. If the configured HTTP server is enabled, `src/http.ts` exposes the runtime snapshot as HTML and JSON on `127.0.0.1`.
-10. `watchWorkflow()` keeps watching `WORKFLOW.md`; a change triggers `SymphonyService.reloadWorkflow()`, which swaps in a new workflow/config for future work without killing in-flight turns.
-11. Shutdown from `SIGINT` or `SIGTERM` closes the watcher, aborts running sessions, clears retry timers, stops the HTTP server, and exits the process.
+8. The orchestrator converts session events into live runtime snapshots, token totals, rate-limit telemetry, blocked-pending-external-change state, and retry scheduling decisions.
+9. If a turn fails because Codex requested interactive input, the agent attempt returns `blocked`; the orchestrator records that issue as blocked until ClickUp state or `updatedAt` changes instead of immediately retrying the same work.
+10. If the configured HTTP server is enabled, `src/http.ts` exposes the runtime snapshot as HTML and JSON on `127.0.0.1`, plus a server-sent event stream for live dashboard updates.
+11. The dashboard page uses `EventSource` against `/api/v1/events` so it can update counts and tables without a full page reload.
+12. `watchWorkflow()` keeps watching `WORKFLOW.md`; a change triggers `SymphonyService.reloadWorkflow()`, which swaps in a new workflow/config for future work without killing in-flight turns.
+13. Shutdown from `SIGINT` or `SIGTERM` closes the watcher, aborts running sessions, clears retry timers, clears runtime snapshot listeners, stops the HTTP server, and exits the process.
 
 Key ownership boundaries:
 
 - `SymphonyService` owns process-level lifecycle.
-- `Orchestrator` owns scheduling state and retry logic.
+- `Orchestrator` owns scheduling state, blocked-until-change tracking, and retry logic.
 - `AgentRunner` owns a single issue attempt.
 - `WorkspaceManager` owns filesystem safety and hook execution.
 - `CodexSession` owns app-server transport.
@@ -86,6 +88,7 @@ Key ownership boundaries:
 - Startup fails if workflow loading or config resolution fails before `SymphonyService` can construct the runtime.
 - Candidate fetch failures skip dispatch for the tick but do not crash the service.
 - Stalled turns are canceled by reconciliation and converted into retries.
+- Interactive-input-required turns are not retried immediately; they become blocked until the ClickUp task changes.
 - Invalid workflow reloads are recorded as `lastConfigError`; the service keeps running with the prior good config.
 - HTTP startup can fail independently if the port cannot be bound.
 

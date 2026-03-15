@@ -36,7 +36,7 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
 6. Notifications from the server are converted into `LiveSessionEvent`s, including token usage and rate-limit data when present.
 7. Server-initiated requests are handled with explicit policy:
    - approval-related requests are auto-approved,
-   - `requestUserInput` requests receive empty answers and fail the active turn with `turn_input_required`,
+   - `requestUserInput` requests receive empty answers, mark the turn as needing input, and emit `turn_input_required`,
    - `tool/call` requests are routed through `DynamicToolHandler`,
    - unsupported requests get a simple error result.
 8. `ClickUpDynamicToolHandler` exposes four tools:
@@ -46,6 +46,13 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
    - `clickup_create_task_comment`
 9. Tool responses are wrapped as `DynamicToolResponse` objects with JSON-serialized `contentItems` so the app-server can feed them back into the turn.
 10. `close()` tears down pending requests, rejects active work, sends `SIGTERM`, waits briefly, then escalates to `SIGKILL` if needed.
+
+Interactive-input nuance introduced in `src/codex/client.ts`:
+
+- `CodexSession` tracks `activeTurnRequiresInput`.
+- When the server asks for user input, Symphony replies with an empty structured answer set instead of hanging the unattended session.
+- If the turn later fails without a useful message, Symphony rewrites the error to `Interactive input required`.
+- Upstream, `AgentRunner` treats that failure as a blocked attempt rather than a generic retryable failure.
 
 Sandbox normalization behavior in `materializeTurnSandboxPolicy()`:
 
@@ -91,7 +98,8 @@ Dynamic tool behavior details:
 - `turn_timeout` fires when an active turn exceeds `turnTimeoutMs`.
 - `port_exit` fires when the child process exits unexpectedly or closes during pending work.
 - malformed JSON lines on stdout emit a `malformed` event and are skipped.
-- `requestUserInput` is intentionally non-interactive; it fails the active turn so unattended runs do not hang waiting for operator input.
+- `requestUserInput` is intentionally non-interactive; it produces a failed turn result with an explicit interactive-input error so unattended runs do not hang waiting for operator input.
+- That failed turn is mapped upstream to a blocked scheduler state instead of an immediate retry.
 - Unsupported tool calls return a structured failure payload instead of crashing the session.
 - ClickUp API failures inside `ClickUpDynamicToolHandler` return tool-level failure JSON and are logged as `dynamic_tool_call_failed`.
 

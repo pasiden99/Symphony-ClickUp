@@ -36,6 +36,7 @@ Important public models from `src/types.ts`:
 | `WorkflowDefinition` | Parsed workflow path, config object, prompt template, and load timestamp |
 | `EffectiveConfig` | Fully typed runtime configuration after defaults and env resolution |
 | `WorkspaceInfo` | Result of ensuring a workspace exists for an issue |
+| `WorkerTerminalStatus` | Attempt terminal states, now including `blocked` for interactive-input-required turns |
 | `RunAttemptResult` | Outcome of one `AgentRunner` attempt |
 | `LiveSessionEvent` | Raw session event data flowing from Codex to the orchestrator |
 | `LiveSessionSnapshot` | Orchestrator-owned current session summary for one running issue |
@@ -48,6 +49,7 @@ Private orchestrator-only models in `src/orchestrator.ts`:
 
 - `RunningEntry`: live in-memory running attempt state, including cancellation reason and abort controller.
 - `RetryState`: `RetryEntry` plus the active timer handle.
+- `BlockedIssueState`: issue metadata used to suppress redispatch until ClickUp state or `updatedAt` changes.
 - `IssueTrackingState`: durable per-issue bookkeeping used for recent events and attempt counts.
 
 ## Important Exports and Classes
@@ -70,11 +72,13 @@ Private orchestrator-only models in `src/orchestrator.ts`:
   - Stronger internal models that reduce branching elsewhere in the codebase.
   - Predictable runtime snapshots for the dashboard and API.
   - Stable interfaces that test suites can fake without booting the full service.
+  - A per-issue `blocked` status in `IssueRuntimeSnapshot` when a turn requires external human input.
 
 ## Failure Modes
 - If ClickUp returns malformed task data, normalization throws `SymphonyError` and the bad task is skipped with a warning.
 - If workflow front matter is missing required fields or contains unsupported tracker settings, `resolveEffectiveConfig()` throws before dispatch.
 - If prompt rendering references unknown variables, `renderIssuePrompt()` fails the attempt rather than silently degrading the prompt.
+- Top-level `RuntimeSnapshot.counts` still only tracks `running` and `retrying`; blocked issues are exposed through `IssueRuntimeSnapshot.status` and orchestrator internals rather than a separate count field.
 - Because `RunningEntry`, `RetryState`, and `IssueTrackingState` are private, docs must treat them as implementation detail rather than public API.
 
 ## Related Tests

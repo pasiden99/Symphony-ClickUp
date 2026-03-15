@@ -181,6 +181,14 @@ Think of it this way:
 - Front matter = how Symphony runs
 - Prompt body = how Codex should behave
 
+The intended workflow is:
+
+1. keep `WORKFLOW-EXAMPLE.md` as the versioned template
+2. copy it to a local `WORKFLOW.md`
+3. edit the local file for the machine or workspace you are running on
+
+In this repository, `WORKFLOW.md` is treated as local runtime state and is ignored by Git.
+
 ## A Minimal Mental Model
 
 Symphony does not automatically know how to prepare a repository workspace.
@@ -214,6 +222,7 @@ These runtime rules are built into the app:
 - Each task gets a stable workspace folder based on its issue identifier.
 - Successful runs are re-queued quickly if the task still remains active.
 - Failed or stalled runs retry with exponential backoff.
+- Runs that fail because Codex requested interactive input are marked blocked and held until the task changes in ClickUp.
 - If a running task moves to a terminal status, Symphony cancels the run and cleans up that task workspace.
 - On startup, Symphony also removes workspaces for tasks already in terminal statuses.
 - Changes to `WORKFLOW.md` are reloaded automatically while Symphony is running.
@@ -229,13 +238,20 @@ Available routes:
 | --- | --- | --- |
 | `/` | `GET` | Human-friendly HTML dashboard |
 | `/api/v1/state` | `GET` | Full runtime snapshot as JSON |
+| `/api/v1/events` | `GET` | Server-sent event stream of runtime snapshots for live dashboard updates |
 | `/api/v1/:issue_identifier` | `GET` | Status for one Symphony issue identifier such as `CU-123` |
 | `/api/v1/refresh` | `POST` | Queue an immediate poll/reconcile cycle |
+
+The dashboard uses `EventSource` against `/api/v1/events`, so counts and tables update live without a manual refresh.
 
 Examples:
 
 ```bash
 curl http://127.0.0.1:3000/api/v1/state
+```
+
+```bash
+curl -N http://127.0.0.1:3000/api/v1/events
 ```
 
 ```bash
@@ -463,6 +479,12 @@ That usually means one of these:
 - the run stalled and exceeded `codex.stall_timeout_ms`
 
 Set `LOG_LEVEL=debug` for more detail.
+
+### A task stopped retrying after asking for input
+
+If Codex requests interactive input during an unattended run, Symphony now treats the issue as blocked instead of retrying the same attempt immediately.
+
+Symphony will try the task again only after the ClickUp task changes, such as a status update, description edit, or comment that updates the task timestamp.
 
 ### Codex can work locally but cannot handle GitHub PR steps
 
