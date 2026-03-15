@@ -97,6 +97,7 @@ export interface WorkspaceInfo {
 export type WorkerTerminalStatus =
   | "succeeded"
   | "failed"
+  | "blocked"
   | "timed_out"
   | "stalled"
   | "canceled_by_reconciliation";
@@ -207,7 +208,7 @@ export interface RuntimeSnapshot {
 export interface IssueRuntimeSnapshot {
   issueIdentifier: string;
   issueId: string;
-  status: "running" | "retrying" | "claimed" | "released" | "unknown";
+  status: "running" | "retrying" | "blocked" | "claimed" | "released" | "unknown";
   workspace: {
     path: string;
   };

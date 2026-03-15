@@ -77,6 +77,7 @@ export class CodexSession {
   private activeTurn: ActiveTurn | null = null;
   private pendingTurnOutcome: CodexTurnResult | SymphonyError | null = null;
   private dynamicToolRegistrationField: DynamicToolRegistrationField | null = null;
+  private activeTurnRequiresInput = false;
   private closed = false;
   private threadId: string | null = null;
   private turnId: string | null = null;
@@ -161,6 +162,7 @@ export class CodexSession {
       deferred.reject(new SymphonyError("turn_timeout", `Codex turn timed out after ${this.config.turnTimeoutMs}ms`));
     }, this.config.turnTimeoutMs);
 
+    this.activeTurnRequiresInput = false;
     this.activeTurn = { deferred, timeout };
 
     if (this.pendingTurnOutcome) {
@@ -435,12 +437,12 @@ export class CodexSession {
         id,
         result: buildToolRequestUserInputResponse(params)
       });
+      this.activeTurnRequiresInput = true;
       this.emit({
         event: "turn_input_required",
         message: method,
         raw: params
       });
-      this.failActiveTurn(new SymphonyError("turn_input_required", "Codex requested interactive user input"));
       return;
     }
 
@@ -525,6 +527,7 @@ export class CodexSession {
 
     const normalizedMethod = method.toLowerCase();
     if (normalizedMethod === "turn/completed") {
+      this.activeTurnRequiresInput = false;
       this.completeActiveTurn({
         status: "completed",
         turnId: this.turnId ?? "unknown",
@@ -534,15 +537,21 @@ export class CodexSession {
     }
 
     if (normalizedMethod === "turn/failed") {
+      const errorMessage =
+        this.activeTurnRequiresInput && (!message || message.trim() === "")
+          ? "Interactive input required"
+          : message ?? "Codex reported turn failure";
+      this.activeTurnRequiresInput = false;
       this.completeActiveTurn({
         status: "failed",
         turnId: this.turnId ?? "unknown",
-        error: message ?? "Codex reported turn failure"
+        error: errorMessage
       });
       return;
     }
 
     if (normalizedMethod === "turn/cancelled") {
+      this.activeTurnRequiresInput = false;
       this.completeActiveTurn({
         status: "cancelled",
         turnId: this.turnId ?? "unknown",
@@ -552,7 +561,7 @@ export class CodexSession {
     }
 
     if (normalizedMethod.includes("requestuserinput")) {
-      this.failActiveTurn(new SymphonyError("turn_input_required", "Codex requested interactive user input"));
+      this.activeTurnRequiresInput = true;
     }
   }
 
@@ -566,6 +575,7 @@ export class CodexSession {
   }
 
   private completeActiveTurn(result: CodexTurnResult): void {
+    this.activeTurnRequiresInput = false;
     const resolvedResult = this.resolveTurnOutcome(result);
 
     if (!this.activeTurn) {
@@ -577,6 +587,7 @@ export class CodexSession {
   }
 
   private failActiveTurn(error: SymphonyError): void {
+    this.activeTurnRequiresInput = false;
     if (!this.activeTurn) {
       this.pendingTurnOutcome = error;
       return;

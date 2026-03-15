@@ -55,7 +55,8 @@ describe("CodexAppServerClient", () => {
     expect(events).toContain("turn_completed");
   });
 
-  test("fails when the server requests user input", async () => {
+  test("returns a failed turn result when the server requests user input", async () => {
+    const events: string[] = [];
     const client = new CodexAppServerClient(
       {
         command: `${process.execPath} ${fixturePath}`,
@@ -71,19 +72,25 @@ describe("CodexAppServerClient", () => {
 
     const session = await client.startSession({
       workspacePath: process.cwd(),
-      onEvent: () => undefined
+      onEvent: (event) => {
+        events.push(event.event);
+      }
     });
 
-    await expect(
-      session.runTurn({
-        prompt: "NEEDS_INPUT",
-        title: "ENG-2: Needs input"
-      })
-    ).rejects.toMatchObject({
-      code: "turn_input_required"
+    const result = await session.runTurn({
+      prompt: "NEEDS_INPUT",
+      title: "ENG-2: Needs input"
     });
 
     await session.close();
+
+    expect(result).toEqual({
+      status: "failed",
+      turnId: "turn-1",
+      error: "Interactive input required"
+    });
+    expect(events).toContain("turn_input_required");
+    expect(events).toContain("turn_failed");
   });
 
   test("advertises and handles supported dynamic tool calls", async () => {

@@ -7,3 +7,4 @@ coverage
 .env.*
 !.env.example
 DROID_MEM_AGENT_INSTRUCTIONS.md
+WORKFLOW.md

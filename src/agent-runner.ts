@@ -172,6 +172,17 @@ export class AgentRunner {
         };
       }
 
+      if (error instanceof SymphonyError && error.code === "turn_input_required") {
+        return {
+          status: "blocked",
+          issue: finalIssue,
+          attempt,
+          workspacePath,
+          error: error.message,
+          turnCount
+        };
+      }
+
       const code = error instanceof SymphonyError ? error.code : null;
       if (code === "turn_timeout") {
         return {
@@ -213,11 +224,28 @@ async function raceAbort<T>(promise: Promise<T>, abortPromise: Promise<never> | 
 }
 
 function mapTurnStatus(result: CodexTurnResult): RunAttemptResult["status"] {
+  if (isInteractiveInputFailure(result.error)) {
+    return "blocked";
+  }
+
   if (result.status === "cancelled") {
     return "failed";
   }
 
   return "failed";
+}
+
+function isInteractiveInputFailure(message: string | null): boolean {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("interactive input required") ||
+    normalized.includes("requested interactive user input") ||
+    normalized.includes("requestuserinput")
+  );
 }
 
 async function collectEnvironmentPreflight(workspacePath: string): Promise<EnvironmentPreflight> {

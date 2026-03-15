@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { SymphonyError } from "../src/errors.js";
 import { Orchestrator } from "../src/orchestrator.js";
 import type { EffectiveConfig, Issue, RunAttemptResult, TrackerClient, WorkflowDefinition } from "../src/types.js";
 import { createLogger } from "../src/logging.js";
@@ -184,6 +185,129 @@ describe("Orchestrator", () => {
 
     expect(agentRunner.runAttempt).toHaveBeenCalledTimes(2);
     expect(agentRunner.runAttempt.mock.calls[1]?.[0].attempt).toBe(1);
+  });
+
+  test("holds blocked work until the task changes instead of retrying the same attempt", async () => {
+    let candidate: Issue = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "Needs a human answer",
+      description: null,
+      priority: 1,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: new Date("2025-01-01T00:00:00Z").toISOString(),
+      updatedAt: new Date("2025-01-01T00:00:00Z").toISOString()
+    };
+
+    const tracker: TrackerClient = {
+      fetchCandidateIssues: vi.fn(async () => [candidate]),
+      fetchIssuesByStates: vi.fn(async () => []),
+      fetchIssueStatesByIds: vi.fn(async () => [candidate])
+    };
+
+    const agentRunner = {
+      updateConfig: vi.fn(),
+      runAttempt: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: "blocked",
+          issue: candidate,
+          attempt: null,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: "Interactive input required",
+          turnCount: 1
+        } satisfies RunAttemptResult)
+        .mockResolvedValueOnce({
+          status: "succeeded",
+          issue: candidate,
+          attempt: null,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: null,
+          turnCount: 1
+        } satisfies RunAttemptResult)
+    };
+
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => tracker,
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      agentRunner as never,
+      createLogger({ enabled: false })
+    );
+
+    await orchestrator.start();
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(agentRunner.runAttempt).toHaveBeenCalledTimes(1);
+    expect(orchestrator.getRuntimeSnapshot().counts.retrying).toBe(0);
+    expect(orchestrator.getIssueSnapshot("ENG-1")?.status).toBe("blocked");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    expect(agentRunner.runAttempt).toHaveBeenCalledTimes(1);
+
+    candidate = {
+      ...candidate,
+      updatedAt: new Date("2025-01-01T00:01:00Z").toISOString()
+    };
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    expect(agentRunner.runAttempt).toHaveBeenCalledTimes(2);
+  });
+
+  test("coalesces runtime snapshot notifications for bursty state changes", async () => {
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => ({
+        fetchCandidateIssues: vi.fn(async () => []),
+        fetchIssuesByStates: vi.fn(async () => []),
+        fetchIssueStatesByIds: vi.fn(async () => [])
+      }),
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      {
+        updateConfig: vi.fn(),
+        runAttempt: vi.fn()
+      } as never,
+      createLogger({ enabled: false })
+    );
+
+    const listener = vi.fn();
+    const unsubscribe = orchestrator.subscribeRuntimeSnapshots(listener);
+
+    orchestrator.applyInvalidWorkflow(new SymphonyError("workflow_reload_failed", "first failure"));
+    orchestrator.applyInvalidWorkflow(new SymphonyError("workflow_reload_failed", "second failure"));
+
+    expect(listener).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0]?.[0].lastConfigError).toEqual({
+      code: "workflow_reload_failed",
+      message: "second failure"
+    });
+
+    unsubscribe();
+    orchestrator.applyInvalidWorkflow(new SymphonyError("workflow_reload_failed", "third failure"));
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });
 

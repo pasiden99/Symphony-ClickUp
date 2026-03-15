@@ -61,13 +61,24 @@ interface IssueTrackingState {
   }>;
 }
 
+interface BlockedIssueState {
+  issueId: string;
+  issueIdentifier: string;
+  updatedAt: string | null;
+  state: string;
+  error: string | null;
+}
+
 export class Orchestrator {
+  private static readonly SNAPSHOT_BROADCAST_DEBOUNCE_MS = 100;
   private readonly logger: Logger;
   private readonly running = new Map<string, RunningEntry>();
   private readonly claimed = new Set<string>();
   private readonly retryAttempts = new Map<string, RetryState>();
+  private readonly blockedUntilChange = new Map<string, BlockedIssueState>();
   private readonly completed = new Set<string>();
   private readonly issueTracking = new Map<string, IssueTrackingState>();
+  private readonly runtimeSnapshotListeners = new Set<(snapshot: RuntimeSnapshot) => void>();
   private readonly codexTotals: RuntimeTotals = {
     inputTokens: 0,
     outputTokens: 0,
@@ -77,6 +88,7 @@ export class Orchestrator {
   private tracker: TrackerClient;
   private stopped = false;
   private tickTimer: NodeJS.Timeout | null = null;
+  private snapshotBroadcastTimer: NodeJS.Timeout | null = null;
   private tickInProgress = false;
   private refreshRequested = false;
   private lastConfigError: { code: string; message: string } | null = null;
@@ -112,6 +124,10 @@ export class Orchestrator {
       clearTimeout(this.tickTimer);
       this.tickTimer = null;
     }
+    if (this.snapshotBroadcastTimer) {
+      clearTimeout(this.snapshotBroadcastTimer);
+      this.snapshotBroadcastTimer = null;
+    }
 
     for (const retryState of this.retryAttempts.values()) {
       clearTimeout(retryState.timer);
@@ -129,6 +145,7 @@ export class Orchestrator {
     }
 
     await Promise.allSettled(runningEntries.map((entry) => entry.promise));
+    this.runtimeSnapshotListeners.clear();
   }
 
   updateWorkflow(workflow: WorkflowDefinition, config: EffectiveConfig): void {
@@ -138,6 +155,7 @@ export class Orchestrator {
     this.workspaceManager.updateConfig(config);
     this.agentRunner.updateConfig(config);
     this.lastConfigError = null;
+    this.notifyRuntimeSnapshotChanged();
 
     if (!this.stopped) {
       this.scheduleTick(0);
@@ -150,6 +168,7 @@ export class Orchestrator {
       message: error.message
     };
     this.logger.error({ code: error.code, message: error.message }, "workflow_reload_failed");
+    this.notifyRuntimeSnapshotChanged();
   }
 
   async requestRefresh(): Promise<{ queued: boolean; coalesced: boolean }> {
@@ -207,6 +226,7 @@ export class Orchestrator {
 
     const runningEntry = [...this.running.values()].find((entry) => entry.identifier === issueIdentifier) ?? null;
     const retryEntry = [...this.retryAttempts.values()].find((state) => state.entry.identifier === issueIdentifier)?.entry ?? null;
+    const blockedEntry = this.blockedUntilChange.get(tracking.issueId) ?? null;
 
     return {
       issueIdentifier: tracking.issueIdentifier,
@@ -215,6 +235,8 @@ export class Orchestrator {
         ? "running"
         : retryEntry
           ? "retrying"
+          : blockedEntry
+            ? "blocked"
           : this.claimed.has(tracking.issueId)
             ? "claimed"
             : "released",
@@ -240,6 +262,13 @@ export class Orchestrator {
       lastError: tracking.lastError,
       recentEvents: [...tracking.recentEvents],
       tracked: {}
+    };
+  }
+
+  subscribeRuntimeSnapshots(listener: (snapshot: RuntimeSnapshot) => void): () => void {
+    this.runtimeSnapshotListeners.add(listener);
+    return () => {
+      this.runtimeSnapshotListeners.delete(listener);
     };
   }
 
@@ -293,11 +322,15 @@ export class Orchestrator {
 
     try {
       validateDispatchConfig(this.config);
-      this.lastConfigError = null;
+      if (this.lastConfigError !== null) {
+        this.lastConfigError = null;
+        this.notifyRuntimeSnapshotChanged();
+      }
     } catch (error) {
       const configError = ensureSymphonyError(error, "config_validation_failed");
       this.lastConfigError = { code: configError.code, message: configError.message };
       this.logger.error({ code: configError.code, message: configError.message }, "dispatch_validation_failed");
+      this.notifyRuntimeSnapshotChanged();
       return;
     }
 
@@ -396,6 +429,7 @@ export class Orchestrator {
     }
 
     this.logger.info({ issue_id: issue.id, issue_identifier: issue.identifier, attempt }, "dispatch_started");
+    this.notifyRuntimeSnapshotChanged();
 
     const promise = this.agentRunner
       .runAttempt({
@@ -515,6 +549,8 @@ export class Orchestrator {
     if (tracking.recentEvents.length > 50) {
       tracking.recentEvents.shift();
     }
+
+    this.notifyRuntimeSnapshotChanged();
   }
 
   private async handleWorkerExit(issueId: string, result: RunAttemptResult): Promise<void> {
@@ -547,6 +583,7 @@ export class Orchestrator {
     );
 
     if (entry.cancellation) {
+      this.blockedUntilChange.delete(issueId);
       if (entry.cancellation.cleanupWorkspace && result.issue.identifier) {
         await this.workspaceManager.removeWorkspaceForIssue(result.issue.identifier).catch((error) => {
           this.logger.warn({ err: formatError(error), issue_id: issueId }, "workspace_cleanup_failed");
@@ -557,21 +594,33 @@ export class Orchestrator {
         this.scheduleRetry(result.issue, this.nextAttempt(entry.retryAttempt), entry.cancellation.reason);
       } else {
         this.claimed.delete(issueId);
+        this.notifyRuntimeSnapshotChanged();
       }
       return;
     }
 
     if (result.status === "succeeded") {
+      this.blockedUntilChange.delete(issueId);
       this.completed.add(issueId);
       this.scheduleRetry(result.issue, 1, null, true);
       return;
     }
 
     if (result.status === "canceled_by_reconciliation") {
+      this.blockedUntilChange.delete(issueId);
       this.claimed.delete(issueId);
+      this.notifyRuntimeSnapshotChanged();
       return;
     }
 
+    if (result.status === "blocked") {
+      this.recordBlockedIssue(result.issue, result.error);
+      this.claimed.delete(issueId);
+      this.notifyRuntimeSnapshotChanged();
+      return;
+    }
+
+    this.blockedUntilChange.delete(issueId);
     this.scheduleRetry(result.issue, this.nextAttempt(entry.retryAttempt), result.error);
   }
 
@@ -633,6 +682,7 @@ export class Orchestrator {
     tracking.restartCount += 1;
     tracking.currentRetryAttempt = attempt;
     tracking.lastError = error;
+    this.notifyRuntimeSnapshotChanged();
   }
 
   private async onRetryTimer(issueId: string): Promise<void> {
@@ -668,6 +718,7 @@ export class Orchestrator {
         );
       } else {
         this.claimed.delete(issueId);
+        this.notifyRuntimeSnapshotChanged();
       }
       return;
     }
@@ -675,6 +726,7 @@ export class Orchestrator {
     const issue = candidates.find((candidate) => candidate.id === issueId);
     if (!issue) {
       this.claimed.delete(issueId);
+      this.notifyRuntimeSnapshotChanged();
       return;
     }
 
@@ -690,6 +742,7 @@ export class Orchestrator {
     }
 
     this.claimed.delete(issueId);
+    this.notifyRuntimeSnapshotChanged();
   }
 
   private shouldDispatch(issue: Issue): boolean {
@@ -702,6 +755,10 @@ export class Orchestrator {
     }
 
     if (this.running.has(issue.id) || this.claimed.has(issue.id)) {
+      return false;
+    }
+
+    if (this.isBlockedPendingExternalChange(issue)) {
       return false;
     }
 
@@ -776,9 +833,65 @@ export class Orchestrator {
     return previousAttempt === null ? 1 : previousAttempt + 1;
   }
 
+  private recordBlockedIssue(issue: Issue, error: string | null): void {
+    this.blockedUntilChange.set(issue.id, {
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      updatedAt: issue.updatedAt,
+      state: issue.state,
+      error
+    });
+
+    this.logger.info(
+      {
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        state: issue.state,
+        updated_at: issue.updatedAt,
+        error
+      },
+      "dispatch_blocked_pending_external_change"
+    );
+  }
+
+  private isBlockedPendingExternalChange(issue: Issue): boolean {
+    const blocked = this.blockedUntilChange.get(issue.id);
+    if (!blocked) {
+      return false;
+    }
+
+    if (blocked.state !== issue.state || blocked.updatedAt !== issue.updatedAt) {
+      this.blockedUntilChange.delete(issue.id);
+      this.notifyRuntimeSnapshotChanged();
+      return false;
+    }
+
+    return true;
+  }
+
   private computeRuntimeSeconds(): number {
     const activeSeconds = [...this.running.values()].reduce((total, entry) => total + (Date.now() - entry.startedAtMs) / 1000, 0);
     return this.codexTotals.secondsRunning + activeSeconds;
+  }
+
+  private notifyRuntimeSnapshotChanged(): void {
+    if (this.runtimeSnapshotListeners.size === 0 || this.snapshotBroadcastTimer) {
+      return;
+    }
+
+    this.snapshotBroadcastTimer = setTimeout(() => {
+      this.snapshotBroadcastTimer = null;
+
+      const snapshot = this.getRuntimeSnapshot();
+      for (const listener of [...this.runtimeSnapshotListeners]) {
+        try {
+          listener(snapshot);
+        } catch (error) {
+          this.logger.warn({ err: formatError(error) }, "runtime_snapshot_listener_failed");
+        }
+      }
+    }, Orchestrator.SNAPSHOT_BROADCAST_DEBOUNCE_MS);
+    this.snapshotBroadcastTimer.unref?.();
   }
 
 }
