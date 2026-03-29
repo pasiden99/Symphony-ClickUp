@@ -504,4 +504,4 @@ Workflow content is reloaded automatically, but the HTTP server does not move to
 
 ## License
 
-No license file is currently included in this repository.
+This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
