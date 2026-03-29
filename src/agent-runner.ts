@@ -19,6 +19,8 @@ export interface RunAttemptOptions {
   signal?: AbortSignal;
 }
 
+type TrackerFactory = (config: EffectiveConfig) => TrackerClient;
+
 interface CliCapabilityProbe {
   available: boolean;
   ok: boolean;
@@ -36,7 +38,7 @@ export class AgentRunner {
 
   constructor(
     private config: EffectiveConfig,
-    private readonly tracker: TrackerClient,
+    private readonly trackerFactory: TrackerFactory,
     private readonly workspaceManager: WorkspaceManager,
     logger: Logger
   ) {
@@ -54,6 +56,7 @@ export class AgentRunner {
     let session: Awaited<ReturnType<CodexAppServerClient["startSession"]>> | null = null;
     let finalIssue = issue;
     let turnCount = 0;
+    const tracker = this.trackerFactory(this.config);
 
     const onAbort = async (): Promise<never> => {
       if (session) {
@@ -140,7 +143,7 @@ export class AgentRunner {
           };
         }
 
-        const refreshed = await raceAbort(this.tracker.fetchIssueStatesByIds([finalIssue.id]), abortPromise);
+        const refreshed = await raceAbort(tracker.fetchIssueStatesByIds([finalIssue.id]), abortPromise);
         const refreshedIssue = refreshed[0];
         if (!refreshedIssue) {
           throw new SymphonyError("clickup_unknown_payload", `Tracker did not return task ${finalIssue.id} after turn completion`);

@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { SymphonyError } from "./errors.js";
 
+const managedProjectEnvKeys = new WeakMap<NodeJS.ProcessEnv, Set<string>>();
+
 export async function loadProjectEnv(options: {
   workflowPath: string;
   env?: NodeJS.ProcessEnv;
@@ -15,12 +17,29 @@ export async function loadProjectEnv(options: {
     ...(await readEnvFile(path.join(workflowDir, ".env.local")))
   };
 
-  for (const [key, value] of Object.entries(fileValues)) {
-    if (!env[key] || env[key]?.trim() === "") {
-      env[key] = value;
+  const previousManagedKeys = managedProjectEnvKeys.get(env) ?? new Set<string>();
+  const nextManagedKeys = new Set<string>();
+
+  for (const key of previousManagedKeys) {
+    if (!(key in fileValues)) {
+      delete env[key];
     }
   }
 
+  for (const [key, value] of Object.entries(fileValues)) {
+    if (previousManagedKeys.has(key)) {
+      env[key] = value;
+      nextManagedKeys.add(key);
+      continue;
+    }
+
+    if (!env[key] || env[key]?.trim() === "") {
+      env[key] = value;
+      nextManagedKeys.add(key);
+    }
+  }
+
+  managedProjectEnvKeys.set(env, nextManagedKeys);
   return env;
 }
 

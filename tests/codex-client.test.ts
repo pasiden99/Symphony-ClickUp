@@ -197,6 +197,38 @@ describe("CodexAppServerClient", () => {
     expect(result.turnId).toBe("turn-legacy");
   });
 
+  test("forces the app server down when it ignores SIGTERM during close", async () => {
+    const client = new CodexAppServerClient(
+      {
+        command: `IGNORE_SIGTERM=1 ${process.execPath} ${fixturePath}`,
+        approvalPolicy: "never",
+        threadSandbox: "workspace-write",
+        turnSandboxPolicy: { type: "workspace-write" },
+        turnTimeoutMs: 5_000,
+        readTimeoutMs: 2_000,
+        stallTimeoutMs: 10_000
+      },
+      createLogger({ enabled: false })
+    );
+
+    const session = await client.startSession({
+      workspacePath: process.cwd(),
+      onEvent: () => undefined
+    });
+
+    const pid = session.pid;
+
+    try {
+      expect(pid).not.toBeNull();
+      await session.close();
+      expect(await waitForProcessExit(pid!)).toBe(true);
+    } finally {
+      if (pid !== null && processExists(pid)) {
+        process.kill(pid, "SIGKILL");
+      }
+    }
+  });
+
   test("materializes workspaceWrite sandbox policy with git metadata writes and network access", () => {
     const policy = materializeTurnSandboxPolicy(
       {
@@ -225,3 +257,25 @@ describe("CodexAppServerClient", () => {
     });
   });
 });
+
+async function waitForProcessExit(pid: number, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  return !processExists(pid);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}

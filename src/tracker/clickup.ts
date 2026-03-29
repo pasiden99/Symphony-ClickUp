@@ -1,8 +1,6 @@
-import path from "node:path";
-import { URL } from "node:url";
-
 import type { Logger } from "pino";
 
+import { ClickUpApiClient, type ClickUpRateLimitDetails } from "../clickup/api.js";
 import { SymphonyError } from "../errors.js";
 import type { ClickUpTrackerConfig, Issue, TrackerClient } from "../types.js";
 import { formatError, mapWithConcurrency, nowIso } from "../utils.js";
@@ -51,9 +49,8 @@ interface ClickUpTeamTasksResponse {
 type FetchLike = typeof fetch;
 
 export class ClickUpTrackerClient implements TrackerClient {
-  private readonly fetchImpl: FetchLike;
   private readonly logger: Logger;
-  private readonly requestTimeoutMs: number;
+  private readonly apiClient: ClickUpApiClient;
 
   constructor(
     private readonly config: ClickUpTrackerConfig,
@@ -61,9 +58,15 @@ export class ClickUpTrackerClient implements TrackerClient {
     fetchImpl: FetchLike = fetch,
     requestTimeoutMs = 30_000
   ) {
-    this.fetchImpl = fetchImpl;
     this.logger = logger.child({ component: "clickup_tracker" });
-    this.requestTimeoutMs = requestTimeoutMs;
+    this.apiClient = new ClickUpApiClient(
+      {
+        endpoint: config.endpoint,
+        apiKey: config.apiKey
+      },
+      fetchImpl,
+      requestTimeoutMs
+    );
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {
@@ -253,100 +256,31 @@ export class ClickUpTrackerClient implements TrackerClient {
     pathname: string,
     query: Record<string, string | string[] | undefined>
   ): Promise<T> {
-    const response = await this.request(pathname, { method: "GET", query });
-
-    try {
-      return (await response.json()) as T;
-    } catch (error) {
-      throw new SymphonyError("clickup_unknown_payload", `ClickUp returned invalid JSON for ${pathname}`, undefined, error);
-    }
-  }
-
-  private async request(
-    pathname: string,
-    options: {
-      method: "GET" | "PUT";
-      query?: Record<string, string | string[] | undefined>;
-      body?: Record<string, unknown>;
-    }
-  ): Promise<Response> {
-    const url = buildApiUrl(this.config.endpoint, pathname);
-
-    for (const [key, rawValue] of Object.entries(options.query ?? {})) {
-      if (rawValue === undefined) {
-        continue;
-      }
-
-      if (Array.isArray(rawValue)) {
-        for (const value of rawValue) {
-          url.searchParams.append(key, value);
-        }
-        continue;
-      }
-
-      url.searchParams.set(key, rawValue);
-    }
-
-    const startedAt = Date.now();
-    const signal = AbortSignal.timeout(this.requestTimeoutMs);
-
-    let response: Response;
-    try {
-      const requestInit: RequestInit = {
-        method: options.method,
-        headers: {
-          Authorization: this.config.apiKey,
-          Accept: "application/json",
-          ...(options.body ? { "Content-Type": "application/json" } : {})
-        },
-        signal
-      };
-      if (options.body) {
-        requestInit.body = JSON.stringify(options.body);
-      }
-
-      response = await this.fetchImpl(url, {
-        ...requestInit
-      });
-    } catch (error) {
-      throw new SymphonyError("clickup_api_request", `ClickUp request failed for ${url.pathname}`, undefined, error);
-    }
-
-    const limitHeaders = {
-      limit: response.headers.get("x-ratelimit-limit"),
-      remaining: response.headers.get("x-ratelimit-remaining"),
-      reset: response.headers.get("x-ratelimit-reset")
-    };
-
-    this.logger.debug(
-      {
-        method: options.method,
-        path: url.pathname,
-        status: response.status,
-        duration_ms: Date.now() - startedAt,
-        rate_limit: limitHeaders,
-        at: nowIso()
+    return this.apiClient.requestJson<T>(pathname, {
+      method: "GET",
+      query,
+      invalidJsonCode: "clickup_unknown_payload",
+      onResponse: (meta) => {
+        this.logger.debug(
+          {
+            method: meta.method,
+            path: meta.path,
+            status: meta.status,
+            duration_ms: meta.durationMs,
+            rate_limit: meta.rateLimit,
+            at: nowIso()
+          },
+          "clickup_request_completed"
+        );
       },
-      "clickup_request_completed"
-    );
-
-    if (response.status === 429) {
-      throw new SymphonyError("clickup_api_rate_limit", `ClickUp rate limit exceeded for ${url.pathname}`, {
-        rateLimit: limitHeaders
-      });
-    }
-
-    if (!response.ok) {
-      throw this.toStatusError(url.pathname, response.status, limitHeaders);
-    }
-
-    return response;
+      statusError: (responsePath, status, rateLimit) => this.toStatusError(responsePath, status, rateLimit)
+    });
   }
 
   private toStatusError(
     pathname: string,
     status: number,
-    rateLimit: { limit: string | null; remaining: string | null; reset: string | null }
+    rateLimit: ClickUpRateLimitDetails
   ): SymphonyError {
     const details = {
       status,
@@ -364,17 +298,6 @@ export class ClickUpTrackerClient implements TrackerClient {
 
     return new SymphonyError("clickup_api_status", `ClickUp responded with ${status} for ${pathname}`, details);
   }
-}
-
-function normalizeBaseUrl(endpoint: string): string {
-  return endpoint.endsWith("/") ? endpoint : `${endpoint}/`;
-}
-
-function buildApiUrl(endpoint: string, pathname: string): URL {
-  const url = new URL(normalizeBaseUrl(endpoint));
-  const normalizedPath = pathname.replace(/^\/+/, "");
-  url.pathname = path.posix.join(url.pathname, normalizedPath);
-  return url;
 }
 
 function normalizeOptionalString(value: unknown): string | null {

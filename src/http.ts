@@ -248,25 +248,25 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
       <section class="hero">
         <div>
           <h1>Symphony Runtime</h1>
-          <p>Workflow: <code id="workflow-path">${escapeHtml(snapshot.workflow.path)}</code></p>
+          <p>Workflow: <code id="workflow-path">-</code></p>
           <p class="live-status" id="live-status">Live updates connecting...</p>
         </div>
         <div class="stats">
           <div class="card">
             <div class="label">Running</div>
-            <div class="value" id="running-count">${snapshot.counts.running}</div>
+            <div class="value" id="running-count">0</div>
           </div>
           <div class="card">
             <div class="label">Retrying</div>
-            <div class="value" id="retrying-count">${snapshot.counts.retrying}</div>
+            <div class="value" id="retrying-count">0</div>
           </div>
           <div class="card">
             <div class="label">Total Tokens</div>
-            <div class="value" id="total-tokens-count">${snapshot.codexTotals.totalTokens}</div>
+            <div class="value" id="total-tokens-count">0</div>
           </div>
           <div class="card">
             <div class="label">Runtime Seconds</div>
-            <div class="value" id="runtime-seconds-count">${formatRuntimeSeconds(snapshot.codexTotals.secondsRunning)}</div>
+            <div class="value" id="runtime-seconds-count">0.0</div>
           </div>
         </div>
       </section>
@@ -283,7 +283,7 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
               <th>Message</th>
             </tr>
           </thead>
-          <tbody id="running-body">${renderRunningRows(snapshot)}</tbody>
+          <tbody id="running-body"><tr><td colspan="6">Loading runtime snapshot...</td></tr></tbody>
         </table>
       </section>
       <section>
@@ -297,10 +297,11 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
               <th>Error</th>
             </tr>
           </thead>
-          <tbody id="retry-body">${renderRetryRows(snapshot)}</tbody>
+          <tbody id="retry-body"><tr><td colspan="4">Loading runtime snapshot...</td></tr></tbody>
         </table>
       </section>
     </main>
+    <script id="initial-snapshot" type="application/json">${serializeJsonForHtml(snapshot)}</script>
     <script>
       (function () {
         if (!window.EventSource) {
@@ -320,6 +321,7 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
         var runtimeSecondsCount = document.getElementById("runtime-seconds-count");
         var runningBody = document.getElementById("running-body");
         var retryBody = document.getElementById("retry-body");
+        var initialSnapshotElement = document.getElementById("initial-snapshot");
 
         function escapeHtml(value) {
           return String(value)
@@ -399,6 +401,16 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
           }
         }
 
+        if (initialSnapshotElement && typeof initialSnapshotElement.textContent === "string") {
+          try {
+            applySnapshot(JSON.parse(initialSnapshotElement.textContent));
+          } catch (_error) {
+            if (liveStatus) {
+              liveStatus.textContent = "Live updates waiting for valid data...";
+            }
+          }
+        }
+
         var source = new EventSource('/api/v1/events');
         source.onopen = function () {
           document.body.dataset.liveState = "connected";
@@ -432,55 +444,13 @@ function renderDashboard(snapshot: RuntimeSnapshot): string {
 </html>`;
 }
 
-function renderRunningRows(snapshot: RuntimeSnapshot): string {
-  if (snapshot.running.length === 0) {
-    return `<tr><td colspan="6">No active runs</td></tr>`;
-  }
-
-  return snapshot.running
-    .map(
-      (row) => `<tr>
-<td>${escapeHtml(row.issueIdentifier)}</td>
-<td>${escapeHtml(row.state)}</td>
-<td>${escapeHtml(row.sessionId ?? "-")}</td>
-<td>${row.turnCount}</td>
-<td>${escapeHtml(row.lastEvent ?? "-")}</td>
-<td>${escapeHtml(row.lastMessage ?? "-")}</td>
-</tr>`
-    )
-    .join("");
-}
-
-function renderRetryRows(snapshot: RuntimeSnapshot): string {
-  if (snapshot.retrying.length === 0) {
-    return `<tr><td colspan="4">No queued retries</td></tr>`;
-  }
-
-  return snapshot.retrying
-    .map(
-      (row) => `<tr>
-<td>${escapeHtml(row.issueIdentifier)}</td>
-<td>${row.attempt}</td>
-<td>${escapeHtml(row.dueAt)}</td>
-<td>${escapeHtml(row.error ?? "-")}</td>
-</tr>`
-    )
-    .join("");
-}
-
-function formatRuntimeSeconds(value: number): string {
-  return value.toFixed(1);
-}
-
 function formatSseEvent(eventName: string, payload: unknown): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function serializeJsonForHtml(value: unknown): string {
+  return JSON.stringify(value)
+    .replaceAll("&", "\\u0026")
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e");
 }

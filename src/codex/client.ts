@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { once } from "node:events";
 import path from "node:path";
 
 import type { Logger } from "pino";
@@ -79,6 +78,9 @@ export class CodexSession {
   private dynamicToolRegistrationField: DynamicToolRegistrationField | null = null;
   private activeTurnRequiresInput = false;
   private closed = false;
+  private childExited = false;
+  private readonly childExitPromise: Promise<void>;
+  private readonly resolveChildExit: () => void;
   private threadId: string | null = null;
   private turnId: string | null = null;
 
@@ -95,6 +97,12 @@ export class CodexSession {
     this.dynamicToolHandler = dynamicToolHandler;
     this.toolSpecs = dynamicToolHandler?.listTools() ?? [];
     this.logger = logger.child({ workspace_path: workspacePath, pid: child.pid ?? null });
+
+    let resolveChildExit!: () => void;
+    this.childExitPromise = new Promise<void>((resolve) => {
+      resolveChildExit = resolve;
+    });
+    this.resolveChildExit = resolveChildExit;
   }
 
   static async start(
@@ -202,17 +210,21 @@ export class CodexSession {
       this.activeTurn = null;
     }
 
-    if (!this.child.killed) {
+    if (!this.childExited) {
       this.child.kill("SIGTERM");
     }
 
     await Promise.race([
-      once(this.child, "exit").then(() => undefined),
+      this.childExitPromise,
       new Promise<void>((resolve) => setTimeout(resolve, 2_000))
     ]);
 
-    if (!this.child.killed) {
+    if (!this.childExited) {
       this.child.kill("SIGKILL");
+      await Promise.race([
+        this.childExitPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+      ]);
     }
   }
 
@@ -315,6 +327,9 @@ export class CodexSession {
     });
 
     this.child.on("exit", (code, signal) => {
+      this.childExited = true;
+      this.resolveChildExit();
+
       if (this.closed) {
         return;
       }

@@ -55,4 +55,47 @@ describe("env loading", () => {
     expect(env.SYMPHONY_REPO_URL).toBe("https://github.com/example/from-shell.git");
     expect(env.LOG_LEVEL).toBe("debug");
   });
+
+  test("reloads managed file-backed env values without overriding shell env", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "symphony-env-reload-"));
+    tempDirs.push(tempDir);
+
+    const env: NodeJS.ProcessEnv = {
+      SHELL_ONLY: "from-shell"
+    };
+
+    await writeFile(
+      path.join(tempDir, ".env"),
+      ["CLICKUP_API_TOKEN=from-dotenv", "REMOVE_ME=first-value"].join("\n")
+    );
+    await writeFile(
+      path.join(tempDir, ".env.local"),
+      ["CLICKUP_API_TOKEN=from-local", "LOCAL_ONLY=local-value", "SHELL_ONLY=from-file"].join("\n")
+    );
+
+    await loadProjectEnv({
+      workflowPath: path.join(tempDir, "WORKFLOW.md"),
+      env
+    });
+
+    expect(env).toMatchObject({
+      CLICKUP_API_TOKEN: "from-local",
+      LOCAL_ONLY: "local-value",
+      REMOVE_ME: "first-value",
+      SHELL_ONLY: "from-shell"
+    });
+
+    await writeFile(path.join(tempDir, ".env"), "CLICKUP_API_TOKEN=from-dotenv-updated\n");
+    await writeFile(path.join(tempDir, ".env.local"), "LOCAL_ONLY=local-value-updated\nSHELL_ONLY=still-from-file\n");
+
+    await loadProjectEnv({
+      workflowPath: path.join(tempDir, "WORKFLOW.md"),
+      env
+    });
+
+    expect(env.CLICKUP_API_TOKEN).toBe("from-dotenv-updated");
+    expect(env.LOCAL_ONLY).toBe("local-value-updated");
+    expect(env.REMOVE_ME).toBeUndefined();
+    expect(env.SHELL_ONLY).toBe("from-shell");
+  });
 });

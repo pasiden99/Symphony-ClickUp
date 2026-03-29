@@ -1,8 +1,6 @@
-import path from "node:path";
-import { URL } from "node:url";
-
 import type { Logger } from "pino";
 
+import { ClickUpApiClient, type ClickUpRequestOptions } from "../clickup/api.js";
 import { SymphonyError } from "../errors.js";
 import type { ClickUpTrackerConfig } from "../types.js";
 
@@ -132,15 +130,24 @@ export interface ClickUpDynamicToolContext {
 
 export class ClickUpDynamicToolHandler implements DynamicToolHandler {
   private readonly logger: Logger;
+  private readonly apiClient: ClickUpApiClient;
 
   constructor(
     private readonly config: ClickUpTrackerConfig,
     logger: Logger,
-    private readonly fetchImpl: FetchLike = fetch,
-    private readonly requestTimeoutMs = 30_000,
+    fetchImpl: FetchLike = fetch,
+    requestTimeoutMs = 30_000,
     private readonly context: ClickUpDynamicToolContext = {}
   ) {
     this.logger = logger.child({ component: "clickup_dynamic_tools" });
+    this.apiClient = new ClickUpApiClient(
+      {
+        endpoint: config.endpoint,
+        apiKey: config.apiKey
+      },
+      fetchImpl,
+      requestTimeoutMs
+    );
   }
 
   listTools(): DynamicToolSpec[] {
@@ -299,59 +306,21 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
       body?: Record<string, unknown>;
     }
   ): Promise<unknown> {
-    const url = buildApiUrl(this.config.endpoint, pathname);
-    for (const [key, value] of Object.entries(options.query ?? {})) {
-      if (value !== undefined) {
-        url.searchParams.set(key, value);
-      }
-    }
-
-    const requestInit: RequestInit = {
+    const requestOptions: ClickUpRequestOptions = {
       method: options.method,
-      headers: {
-        Authorization: this.config.apiKey,
-        Accept: "application/json",
-        ...(options.body ? { "Content-Type": "application/json" } : {})
-      },
-      signal: AbortSignal.timeout(this.requestTimeoutMs)
+      invalidJsonCode: "clickup_unknown_payload",
+      networkFailureCode: "clickup_api_request"
     };
 
+    if (options.query) {
+      requestOptions.query = options.query;
+    }
     if (options.body) {
-      requestInit.body = JSON.stringify(options.body);
+      requestOptions.body = options.body;
     }
 
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, requestInit);
-    } catch (error) {
-      throw new SymphonyError("clickup_api_request", `ClickUp request failed for ${url.pathname}`, undefined, error);
-    }
-
-    if (response.status === 429) {
-      throw new SymphonyError("clickup_api_rate_limit", `ClickUp rate limit exceeded for ${url.pathname}`);
-    }
-
-    if (!response.ok) {
-      throw new SymphonyError("clickup_api_request", `ClickUp returned ${response.status} for ${url.pathname}`);
-    }
-
-    try {
-      return await response.json();
-    } catch (error) {
-      throw new SymphonyError("clickup_unknown_payload", `ClickUp returned invalid JSON for ${url.pathname}`, undefined, error);
-    }
+    return this.apiClient.requestJson(pathname, requestOptions);
   }
-}
-
-function normalizeEndpoint(endpoint: string): string {
-  return endpoint.endsWith("/") ? endpoint : `${endpoint}/`;
-}
-
-function buildApiUrl(endpoint: string, pathname: string): URL {
-  const url = new URL(normalizeEndpoint(endpoint));
-  const normalizedPath = pathname.replace(/^\/+/, "");
-  url.pathname = path.posix.join(url.pathname, normalizedPath);
-  return url;
 }
 
 function asObject(value: unknown): Record<string, unknown> {

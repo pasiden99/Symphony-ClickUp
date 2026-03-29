@@ -44,7 +44,7 @@ export class SymphonyService {
     const workspaceManager = new WorkspaceManager(config, this.logger);
     const trackerFactory = (nextConfig: EffectiveConfig) =>
       new ClickUpTrackerClient(nextConfig.tracker, this.logger);
-    const agentRunner = new AgentRunner(config, trackerFactory(config), workspaceManager, this.logger);
+    const agentRunner = new AgentRunner(config, trackerFactory, workspaceManager, this.logger);
     const orchestrator = new Orchestrator(
       config,
       workflow,

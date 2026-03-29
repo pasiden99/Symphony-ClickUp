@@ -2,6 +2,10 @@
 
 import readline from "node:readline";
 
+if (process.env.IGNORE_SIGTERM === "1") {
+  process.on("SIGTERM", () => undefined);
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity

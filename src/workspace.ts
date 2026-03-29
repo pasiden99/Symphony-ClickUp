@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
-import os from "node:os";
+import * as fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -12,10 +11,16 @@ import { sanitizeWorkspaceKey } from "./utils.js";
 
 type HookName = "afterCreate" | "beforeRun" | "afterRun" | "beforeRemove";
 
+interface WorkspaceFs {
+  mkdir: typeof fs.mkdir;
+  rm: typeof fs.rm;
+  stat: typeof fs.stat;
+}
+
 export class WorkspaceManager {
   private readonly logger: Logger;
 
-  constructor(private config: EffectiveConfig, logger: Logger) {
+  constructor(private config: EffectiveConfig, logger: Logger, private readonly fsOps: WorkspaceFs = fs) {
     this.logger = logger.child({ component: "workspace_manager" });
   }
 
@@ -24,7 +29,7 @@ export class WorkspaceManager {
   }
 
   async ensureForIssue(issueIdentifier: string): Promise<WorkspaceInfo> {
-    await mkdir(this.config.workspace.root, { recursive: true });
+    await this.fsOps.mkdir(this.config.workspace.root, { recursive: true });
 
     const workspaceKey = sanitizeWorkspaceKey(issueIdentifier);
     const workspacePath = path.join(this.config.workspace.root, workspaceKey);
@@ -33,7 +38,7 @@ export class WorkspaceManager {
     let createdNow = false;
 
     try {
-      const stats = await stat(workspacePath);
+      const stats = await this.fsOps.stat(workspacePath);
       if (!stats.isDirectory()) {
         throw new SymphonyError(
           "invalid_workspace_path",
@@ -45,15 +50,19 @@ export class WorkspaceManager {
         throw error;
       }
 
+      if (!isErrnoException(error, "ENOENT")) {
+        throw error;
+      }
+
       createdNow = true;
-      await mkdir(workspacePath, { recursive: true });
+      await this.fsOps.mkdir(workspacePath, { recursive: true });
     }
 
     if (createdNow && this.config.hooks.afterCreate) {
       try {
         await this.runHook("afterCreate", workspacePath);
       } catch (error) {
-        await rm(workspacePath, { recursive: true, force: true });
+        await this.fsOps.rm(workspacePath, { recursive: true, force: true });
         throw error;
       }
     }
@@ -72,7 +81,7 @@ export class WorkspaceManager {
     await Promise.all(
       transientEntries.map(async (entry) => {
         const targetPath = path.join(workspacePath, entry);
-        await rm(targetPath, { recursive: true, force: true });
+        await this.fsOps.rm(targetPath, { recursive: true, force: true });
       })
     );
   }
@@ -85,7 +94,7 @@ export class WorkspaceManager {
   async removeWorkspacePath(workspacePath: string): Promise<void> {
     this.assertInsideWorkspaceRoot(workspacePath);
 
-    const exists = await pathExists(workspacePath);
+    const exists = await pathExists(this.fsOps, workspacePath);
     if (!exists) {
       return;
     }
@@ -94,7 +103,7 @@ export class WorkspaceManager {
       await this.runHookBestEffort("beforeRemove", workspacePath);
     }
 
-    await rm(workspacePath, { recursive: true, force: true });
+    await this.fsOps.rm(workspacePath, { recursive: true, force: true });
   }
 
   async runHook(name: HookName, workspacePath: string): Promise<void> {
@@ -201,11 +210,15 @@ function resolvePathPrefix(value: string): string {
   return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
 }
 
-async function pathExists(targetPath: string): Promise<boolean> {
+async function pathExists(fsOps: WorkspaceFs, targetPath: string): Promise<boolean> {
   try {
-    await stat(targetPath);
+    await fsOps.stat(targetPath);
     return true;
   } catch {
     return false;
   }
+}
+
+function isErrnoException(error: unknown, code: string): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === code;
 }
