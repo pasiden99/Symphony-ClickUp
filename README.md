@@ -4,6 +4,8 @@ Symphony is a local automation service that watches ClickUp for active tasks, gi
 
 It is designed for teams that want a repeatable "agent works the ticket" loop instead of manually launching one-off scripts.
 
+![Symphony Runtime dashboard](./docs/assets/symphony-runtime.webp)
+
 ## What Symphony Does
 
 At a high level, Symphony:
