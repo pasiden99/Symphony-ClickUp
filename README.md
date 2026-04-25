@@ -54,7 +54,7 @@ Before you start, make sure you have:
 - npm
 - Git
 - A ClickUp API token
-- A Codex CLI installation that supports `app-server`
+- A Codex CLI installation that supports `app-server` in the same shell Symphony will use
 - Access to the repository Symphony should clone into each task workspace
 
 Optional but useful:
@@ -108,7 +108,10 @@ Then edit these values in `WORKFLOW.md`:
   - `tracker.folder_ids`
 - `workspace.root`
 - `hooks.after_create`
-- `codex.command`
+- `agent.max_turns`
+- `codex.command` if your Codex launch command differs from the example
+- `codex.model`
+- `codex.reasoning_effort`
 - `server.port` if you want the dashboard enabled
 
 If you use the example workflow, replace the placeholder ClickUp IDs before starting.
@@ -343,6 +346,10 @@ Retry behavior:
 | Key | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `codex.command` | No | `codex app-server` | Command Symphony launches for each workspace |
+| `codex.model` | No | unset | Optional app-server model override passed on `thread/start` and `turn/start` |
+| `codex.reasoning_effort` | No | unset | Optional turn effort override passed as `effort` on `turn/start` |
+| `codex.personality` | No | unset | Optional Codex personality override |
+| `codex.service_name` | No | unset | Optional service label passed on `thread/start` |
 | `codex.approval_policy` | No | `never` | Passed through to Codex |
 | `codex.thread_sandbox` | No | `workspace-write` | Passed through to Codex when the thread starts |
 | `codex.turn_sandbox_policy` | No | `{ type: "workspace-write" }` | Passed through for each turn |
@@ -350,14 +357,18 @@ Retry behavior:
 | `codex.read_timeout_ms` | No | `5000` | RPC request/response timeout |
 | `codex.stall_timeout_ms` | No | `300000` | Cancels a run if no Codex event is seen within this window |
 
-The example workflow uses a more explicit Codex command:
+The example workflow keeps the shell command focused on launching app-server, and puts model-level overrides in explicit workflow keys:
 
 ```yaml
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
+  command: codex --config shell_environment_policy.inherit=all app-server
+  model: gpt-5.3-codex
+  reasoning_effort: xhigh
+  personality: pragmatic
+  service_name: symphony
 ```
 
-Use whatever Codex invocation matches your environment.
+Use whatever Codex launch command matches your environment. Prefer keeping model and effort settings in the explicit workflow keys unless you have a shell-specific reason to inline them into `codex.command`.
 
 ### `server`
 
@@ -481,6 +492,20 @@ That usually means one of these:
 - the run stalled and exceeded `codex.stall_timeout_ms`
 
 Set `LOG_LEVEL=debug` for more detail.
+
+### Codex exits immediately with a missing optional dependency
+
+If the retry error mentions a missing package such as `@openai/codex-darwin-x64` or `@openai/codex-darwin-arm64`, reinstall Codex in the same Node environment Symphony uses:
+
+```bash
+nvm use <your-node-version>
+npm uninstall -g @openai/codex
+npm install -g @openai/codex@latest --include=optional
+hash -r
+codex --version
+```
+
+If you do not use `nvm`, activate whatever Node installation provides `codex` first. If `codex --version` still fails, check whether npm is omitting optional dependencies with `npm config get omit`.
 
 ### A task stopped retrying after asking for input
 

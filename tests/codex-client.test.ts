@@ -151,6 +151,40 @@ describe("CodexAppServerClient", () => {
     });
   });
 
+  test("passes configured model overrides to thread/start and turn/start", async () => {
+    const client = new CodexAppServerClient(
+      {
+        command: `${process.execPath} ${fixturePath}`,
+        model: "gpt-5.3-codex",
+        reasoningEffort: "xhigh",
+        personality: "pragmatic",
+        serviceName: "symphony-tests",
+        approvalPolicy: "never",
+        threadSandbox: "workspace-write",
+        turnSandboxPolicy: { type: "workspace-write" },
+        turnTimeoutMs: 5_000,
+        readTimeoutMs: 2_000,
+        stallTimeoutMs: 10_000
+      },
+      createLogger({ enabled: false })
+    );
+
+    const session = await client.startSession({
+      workspacePath: process.cwd(),
+      onEvent: () => undefined
+    });
+
+    const result = await session.runTurn({
+      prompt: "CHECK_OVERRIDES",
+      title: "ENG-5: Override propagation"
+    });
+
+    await session.close();
+
+    expect(result.status).toBe("completed");
+    expect(result.turnId).toBe("turn-1");
+  });
+
   test("falls back to legacy tools field when dynamicTools is rejected", async () => {
     const client = new CodexAppServerClient(
       {
@@ -227,6 +261,72 @@ describe("CodexAppServerClient", () => {
         process.kill(pid, "SIGKILL");
       }
     }
+  });
+
+  test("returns a failed turn result when turn/completed reports failed status", async () => {
+    const client = new CodexAppServerClient(
+      {
+        command: `${process.execPath} ${fixturePath}`,
+        approvalPolicy: "never",
+        threadSandbox: "workspace-write",
+        turnSandboxPolicy: { type: "workspace-write" },
+        turnTimeoutMs: 5_000,
+        readTimeoutMs: 2_000,
+        stallTimeoutMs: 10_000
+      },
+      createLogger({ enabled: false })
+    );
+
+    const session = await client.startSession({
+      workspacePath: process.cwd(),
+      onEvent: () => undefined
+    });
+
+    const result = await session.runTurn({
+      prompt: "FORCE_FAILURE",
+      title: "ENG-6: Failed completion"
+    });
+
+    await session.close();
+
+    expect(result).toEqual({
+      status: "failed",
+      turnId: "turn-1",
+      error: "dynamic tool registration rejected"
+    });
+  });
+
+  test("returns a cancelled turn result when turn/completed reports interruption", async () => {
+    const client = new CodexAppServerClient(
+      {
+        command: `${process.execPath} ${fixturePath}`,
+        approvalPolicy: "never",
+        threadSandbox: "workspace-write",
+        turnSandboxPolicy: { type: "workspace-write" },
+        turnTimeoutMs: 5_000,
+        readTimeoutMs: 2_000,
+        stallTimeoutMs: 10_000
+      },
+      createLogger({ enabled: false })
+    );
+
+    const session = await client.startSession({
+      workspacePath: process.cwd(),
+      onEvent: () => undefined
+    });
+
+    const result = await session.runTurn({
+      prompt: "FORCE_INTERRUPTED",
+      title: "ENG-7: Interrupted completion"
+    });
+
+    await session.close();
+
+    expect(result).toEqual({
+      status: "cancelled",
+      turnId: "turn-1",
+      error: "turn interrupted"
+    });
   });
 
   test("materializes workspaceWrite sandbox policy with git metadata writes and network access", () => {

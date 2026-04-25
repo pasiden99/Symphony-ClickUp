@@ -16,6 +16,7 @@ let pendingUserInputResponseId = null;
 let pendingToolResponseId = null;
 let sawClickUpToolSpec = false;
 let sawV2ThreadFlags = false;
+let threadStartOverrides = null;
 
 function send(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -40,6 +41,11 @@ rl.on("line", (line) => {
     ) {
       sawV2ThreadFlags = true;
     }
+    threadStartOverrides = {
+      model: message.params?.model ?? null,
+      personality: message.params?.personality ?? null,
+      serviceName: message.params?.serviceName ?? null
+    };
     send({ id: message.id, result: { thread: { id: "thread-1" } } });
     return;
   }
@@ -49,6 +55,82 @@ rl.on("line", (line) => {
     send({ id: message.id, result: { turn: { id: `turn-${turnCounter}` } } });
 
     const prompt = message.params?.input?.[0]?.text ?? "";
+    if (prompt.includes("CHECK_OVERRIDES")) {
+      if (threadStartOverrides?.model !== "gpt-5.3-codex") {
+        process.stderr.write("thread/start missing model override\n");
+        process.exitCode = 1;
+        return;
+      }
+      if (threadStartOverrides?.personality !== "pragmatic") {
+        process.stderr.write("thread/start missing personality override\n");
+        process.exitCode = 1;
+        return;
+      }
+      if (threadStartOverrides?.serviceName !== "symphony-tests") {
+        process.stderr.write("thread/start missing serviceName override\n");
+        process.exitCode = 1;
+        return;
+      }
+      if (message.params?.model !== "gpt-5.3-codex") {
+        process.stderr.write("turn/start missing model override\n");
+        process.exitCode = 1;
+        return;
+      }
+      if (message.params?.effort !== "xhigh") {
+        process.stderr.write("turn/start missing effort override\n");
+        process.exitCode = 1;
+        return;
+      }
+      if (message.params?.personality !== "pragmatic") {
+        process.stderr.write("turn/start missing personality override\n");
+        process.exitCode = 1;
+        return;
+      }
+      send({
+        method: "turn/completed",
+        params: {
+          turn: {
+            id: `turn-${turnCounter}`,
+            status: "completed",
+            error: null
+          }
+        }
+      });
+      return;
+    }
+
+    if (prompt.includes("FORCE_FAILURE")) {
+      send({
+        method: "turn/completed",
+        params: {
+          turn: {
+            id: `turn-${turnCounter}`,
+            status: "failed",
+            error: {
+              message: "dynamic tool registration rejected"
+            }
+          }
+        }
+      });
+      return;
+    }
+
+    if (prompt.includes("FORCE_INTERRUPTED")) {
+      send({
+        method: "turn/completed",
+        params: {
+          turn: {
+            id: `turn-${turnCounter}`,
+            status: "interrupted",
+            error: {
+              message: "turn interrupted"
+            }
+          }
+        }
+      });
+      return;
+    }
+
     if (prompt.includes("NEEDS_INPUT")) {
       pendingUserInputResponseId = 900 + turnCounter;
       send({
@@ -110,7 +192,16 @@ rl.on("line", (line) => {
         }
       }
     });
-    send({ method: "turn/completed", params: { message: "done" } });
+    send({
+      method: "turn/completed",
+      params: {
+        turn: {
+          id: `turn-${turnCounter}`,
+          status: "completed",
+          error: null
+        }
+      }
+    });
     return;
   }
 
@@ -159,6 +250,15 @@ rl.on("line", (line) => {
         }
       }
     });
-    send({ method: "turn/completed", params: { message: "tool done" } });
+    send({
+      method: "turn/completed",
+      params: {
+        turn: {
+          id: `turn-${turnCounter}`,
+          status: "completed",
+          error: null
+        }
+      }
+    });
   }
 });

@@ -28,7 +28,7 @@ This page documents the tracker adapter that reads ClickUp tasks for scheduling 
 6. If blocker resolution is enabled, `loadBlockers()` extracts blocker IDs from task dependencies and fetches those tasks concurrently.
 7. `normalizeTask()` converts a `ClickUpTask` into `Issue`:
    - `id` comes from `task.id`
-   - `identifier` prefers `custom_id`, then `custom_item_id`, then `CU-{id}`
+   - `identifier` prefers `custom_id`, then falls back to `CU-{id}`
    - `description` prefers `description`, falling back to `text_content`
    - tags are lowercased into `labels`
    - blockers become `BlockerRef[]`

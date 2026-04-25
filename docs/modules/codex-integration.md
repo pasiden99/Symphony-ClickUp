@@ -33,19 +33,25 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
    - title
    - `approvalPolicy`
    - the normalized turn sandbox policy returned by `materializeTurnSandboxPolicy()`
-6. Notifications from the server are converted into `LiveSessionEvent`s, including token usage and rate-limit data when present.
-7. Server-initiated requests are handled with explicit policy:
+   - optional workflow-level overrides for `model`, `effort`, and `personality`
+6. `startThread()` also passes optional workflow-level overrides for `model`, `personality`, and `serviceName`.
+7. Notifications from the server are converted into `LiveSessionEvent`s, including token usage and rate-limit data when present.
+8. `turn/completed` is not treated as unconditional success. Symphony inspects the nested turn payload and maps:
+   - `completed` to a completed turn
+   - `failed` to a failed turn result
+   - `interrupted` / `cancelled` to a cancelled turn result
+9. Server-initiated requests are handled with explicit policy:
    - approval-related requests are auto-approved,
    - `requestUserInput` requests receive empty answers, mark the turn as needing input, and emit `turn_input_required`,
    - `tool/call` requests are routed through `DynamicToolHandler`,
    - unsupported requests get a simple error result.
-8. `ClickUpDynamicToolHandler` exposes four tools:
+10. `ClickUpDynamicToolHandler` exposes four tools:
    - `clickup_get_task`
    - `clickup_update_task`
    - `clickup_get_task_comments`
    - `clickup_create_task_comment`
-9. Tool responses are wrapped as `DynamicToolResponse` objects with JSON-serialized `contentItems` so the app-server can feed them back into the turn.
-10. `close()` tears down pending requests, rejects active work, sends `SIGTERM`, waits briefly, then escalates to `SIGKILL` if needed.
+11. Tool responses are wrapped as `DynamicToolResponse` objects with JSON-serialized `contentItems` so the app-server can feed them back into the turn.
+12. `close()` tears down pending requests, rejects active work, sends `SIGTERM`, waits briefly, then escalates to `SIGKILL` if needed.
 
 Interactive-input nuance introduced in `src/codex/client.ts`:
 
@@ -85,6 +91,7 @@ Dynamic tool behavior details:
   - `CodexConfig`
   - workspace path
   - prompt text and issue title
+  - optional workflow-level model, effort, personality, and service-name overrides
   - optional dynamic tool handler
   - tool-call arguments from the Codex server
 - Outputs:
@@ -97,6 +104,7 @@ Dynamic tool behavior details:
 - `response_timeout` fires when a request to Codex app-server does not resolve within `readTimeoutMs`.
 - `turn_timeout` fires when an active turn exceeds `turnTimeoutMs`.
 - `port_exit` fires when the child process exits unexpectedly or closes during pending work.
+- `turn/completed` can still represent a failed or interrupted turn; Symphony now reads the nested status and error payload instead of assuming success from the notification name alone.
 - malformed JSON lines on stdout emit a `malformed` event and are skipped.
 - `requestUserInput` is intentionally non-interactive; it produces a failed turn result with an explicit interactive-input error so unattended runs do not hang waiting for operator input.
 - That failed turn is mapped upstream to a blocked scheduler state instead of an immediate retry.

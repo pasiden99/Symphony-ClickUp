@@ -28,7 +28,6 @@ interface ClickUpDependency {
 interface ClickUpTask {
   id?: string | null;
   custom_id?: string | null;
-  custom_item_id?: number | null;
   name?: string | null;
   description?: string | null;
   text_content?: string | null;
@@ -197,9 +196,7 @@ export class ClickUpTrackerClient implements TrackerClient {
     const id = asRequiredString(task.id, "ClickUp task id is missing");
     const title = asRequiredString(task.name, `ClickUp task ${id} name is missing`);
     const state = asRequiredString(task.status?.status, `ClickUp task ${id} status is missing`);
-    const identifier =
-      normalizeOptionalString(task.custom_id) ??
-      (typeof task.custom_item_id === "number" ? `CU-${task.custom_item_id}` : `CU-${id}`);
+    const identifier = normalizeOptionalString(task.custom_id) ?? `CU-${id}`;
 
     const labels = Array.isArray(task.tags)
       ? task.tags

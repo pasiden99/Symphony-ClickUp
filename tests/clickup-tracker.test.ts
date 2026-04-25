@@ -120,6 +120,63 @@ describe("ClickUpTrackerClient", () => {
       message: expect.stringContaining("Workspace/team ID")
     });
   });
+
+  test("uses the raw task id when custom_id is missing even if custom_item_id repeats", async () => {
+    const client = new ClickUpTrackerClient(
+      {
+        kind: "clickup",
+        endpoint: "https://api.clickup.com/api/v2",
+        apiKey: "token",
+        workspaceId: "team-1",
+        spaceIds: [],
+        folderIds: [],
+        listIds: ["list-1"],
+        activeStates: ["Todo"],
+        activeStateSet: new Set(["todo"]),
+        terminalStates: ["Done"],
+        terminalStateSet: new Set(["done"])
+      },
+      createLogger({ enabled: false }),
+      async (input) => {
+        const url = String(input);
+        if (url.includes("/team/team-1/task")) {
+          return jsonResponse({
+            tasks: [
+              {
+                id: "868jd7910",
+                custom_item_id: 0,
+                name: "Task one",
+                status: { status: "Todo" }
+              },
+              {
+                id: "868jd78x5",
+                custom_item_id: 0,
+                name: "Task two",
+                status: { status: "Todo" }
+              },
+              {
+                id: "868jd78zx",
+                custom_item_id: 0,
+                name: "Task three",
+                status: { status: "Todo" }
+              }
+            ],
+            last_page: true
+          });
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      }
+    );
+
+    const issues = await client.fetchCandidateIssues();
+
+    expect(issues.map((issue) => issue.identifier)).toEqual([
+      "CU-868jd7910",
+      "CU-868jd78x5",
+      "CU-868jd78zx"
+    ]);
+  });
 });
 
 function jsonResponse(body: unknown, status = 200): Response {

@@ -154,7 +154,10 @@ export class CodexSession {
       cwd: this.workspacePath,
       title: options.title,
       approvalPolicy: this.config.approvalPolicy,
-      sandboxPolicy: materializeTurnSandboxPolicy(this.config.turnSandboxPolicy, this.workspacePath)
+      sandboxPolicy: materializeTurnSandboxPolicy(this.config.turnSandboxPolicy, this.workspacePath),
+      model: this.config.model ?? undefined,
+      effort: this.config.reasoningEffort ?? undefined,
+      personality: this.config.personality ?? undefined
     });
 
     this.turnId = extractTurnId(response);
@@ -263,7 +266,10 @@ export class CodexSession {
       sandbox: this.config.threadSandbox,
       cwd: this.workspacePath,
       experimentalRawEvents: false,
-      persistExtendedHistory: false
+      persistExtendedHistory: false,
+      model: this.config.model ?? undefined,
+      personality: this.config.personality ?? undefined,
+      serviceName: this.config.serviceName ?? "symphony"
     };
 
     if (this.toolSpecs.length === 0) {
@@ -543,11 +549,7 @@ export class CodexSession {
     const normalizedMethod = method.toLowerCase();
     if (normalizedMethod === "turn/completed") {
       this.activeTurnRequiresInput = false;
-      this.completeActiveTurn({
-        status: "completed",
-        turnId: this.turnId ?? "unknown",
-        error: null
-      });
+      this.completeActiveTurn(extractTurnCompletionResult(params, this.turnId));
       return;
     }
 
@@ -681,6 +683,79 @@ function extractMessage(value: unknown): string | null {
     const candidate = objectValue[key];
     if (typeof candidate === "string" && candidate.trim() !== "") {
       return truncateMessage(candidate);
+    }
+  }
+
+  return null;
+}
+
+function extractTurnCompletionResult(params: unknown, activeTurnId: string | null): CodexTurnResult {
+  const fallbackTurnId = activeTurnId ?? "unknown";
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return {
+      status: "completed",
+      turnId: fallbackTurnId,
+      error: null
+    };
+  }
+
+  const turn = (params as { turn?: unknown }).turn;
+  if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+    return {
+      status: "completed",
+      turnId: fallbackTurnId,
+      error: null
+    };
+  }
+
+  const turnObject = turn as {
+    id?: unknown;
+    status?: unknown;
+    error?: unknown;
+  };
+  const turnId = typeof turnObject.id === "string" ? turnObject.id : fallbackTurnId;
+  const normalizedStatus = typeof turnObject.status === "string" ? turnObject.status.trim().toLowerCase() : "completed";
+  const errorMessage = extractTurnErrorMessage(turnObject.error);
+
+  if (normalizedStatus === "failed") {
+    return {
+      status: "failed",
+      turnId,
+      error: errorMessage ?? "Codex reported turn failure"
+    };
+  }
+
+  if (normalizedStatus === "interrupted" || normalizedStatus === "cancelled" || normalizedStatus === "canceled") {
+    return {
+      status: "cancelled",
+      turnId,
+      error: errorMessage ?? "Codex reported turn interruption"
+    };
+  }
+
+  return {
+    status: "completed",
+    turnId,
+    error: null
+  };
+}
+
+function extractTurnErrorMessage(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const errorObject = value as Record<string, unknown>;
+  const directMessage = errorObject.message;
+  if (typeof directMessage === "string" && directMessage.trim() !== "") {
+    return truncateMessage(directMessage);
+  }
+
+  const nestedDetails = firstDefined(errorObject.additionalDetails, errorObject.additional_details);
+  if (nestedDetails && typeof nestedDetails === "object" && !Array.isArray(nestedDetails)) {
+    const nestedMessage = (nestedDetails as Record<string, unknown>).message;
+    if (typeof nestedMessage === "string" && nestedMessage.trim() !== "") {
+      return truncateMessage(nestedMessage);
     }
   }
 

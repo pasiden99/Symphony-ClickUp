@@ -78,4 +78,33 @@ describe("config resolution", () => {
 
     expect(config.workspace.root).toContain("custom-workspaces");
   });
+
+  test("resolves optional codex model overrides", () => {
+    const config = resolveEffectiveConfig(
+      {
+        ...baseWorkflow,
+        config: {
+          ...baseWorkflow.config,
+          codex: {
+            command: "codex app-server",
+            model: "gpt-5.3-codex",
+            reasoning_effort: "xhigh",
+            personality: "pragmatic",
+            service_name: "symphony-tests"
+          }
+        }
+      },
+      {
+        cwd: "/tmp/repo",
+        env: {
+          CLICKUP_API_TOKEN: "token-123"
+        }
+      }
+    );
+
+    expect(config.codex.model).toBe("gpt-5.3-codex");
+    expect(config.codex.reasoningEffort).toBe("xhigh");
+    expect(config.codex.personality).toBe("pragmatic");
+    expect(config.codex.serviceName).toBe("symphony-tests");
+  });
 });

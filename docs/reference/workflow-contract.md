@@ -37,7 +37,7 @@ Current front matter sections used by the implementation:
 | `workspace` | Root directory for per-task workspaces |
 | `hooks` | Shell hooks around workspace create/run/remove lifecycle |
 | `agent` | Concurrency, retry backoff, and max-turn controls |
-| `codex` | Codex command and sandbox/timeout settings |
+| `codex` | Codex launch command, optional model/personality overrides, and sandbox/timeout settings |
 | `server` | Optional local HTTP server port |
 
 Environment precedence:
@@ -47,6 +47,15 @@ Environment precedence:
 3. `.env`
 
 The code achieves that by loading file values and only applying them when the target key is absent or blank in the provided environment object.
+
+Notable `codex` keys beyond the launch command:
+
+- `codex.model`
+- `codex.reasoning_effort`
+- `codex.personality`
+- `codex.service_name`
+
+These let the workflow describe app-server request defaults without forcing those values to be hard-coded into `codex.command`.
 
 Template variables available to the prompt body:
 

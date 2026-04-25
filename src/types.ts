@@ -51,6 +51,10 @@ export interface AgentConfig {
 
 export interface CodexConfig {
   command: string;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  personality?: string | null;
+  serviceName?: string | null;
   approvalPolicy: unknown;
   threadSandbox: unknown;
   turnSandboxPolicy: unknown;

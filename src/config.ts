@@ -117,6 +117,10 @@ export function resolveEffectiveConfig(
     },
     codex: {
       command: codexCommand,
+      model: optionalString(codex.model),
+      reasoningEffort: optionalString(firstDefined(codex.reasoning_effort, codex.effort)),
+      personality: optionalString(codex.personality),
+      serviceName: optionalString(firstDefined(codex.service_name, codex.serviceName)),
       approvalPolicy: codex.approval_policy ?? "never",
       threadSandbox: codex.thread_sandbox ?? "workspace-write",
       turnSandboxPolicy: codex.turn_sandbox_policy ?? { type: "workspace-write" },
@@ -186,6 +190,16 @@ function normalizeStateConcurrency(value: unknown): Record<string, number> {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function firstDefined<T>(...values: T[]): T | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
 }
 
 function parseOptionalPort(value: unknown): number | null {

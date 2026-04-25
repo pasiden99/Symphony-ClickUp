@@ -51,6 +51,7 @@ Notable config behavior from `src/config.ts`:
 - At least one of `tracker.space_ids`, `tracker.folder_ids`, or `tracker.list_ids` must be present.
 - `workspace.root` defaults to a temp-dir-backed `symphony_workspaces` path.
 - `codex.command` defaults to `codex app-server`.
+- `codex.model`, `codex.reasoning_effort`, `codex.personality`, and `codex.service_name` are optional pass-through overrides for app-server startup and turn creation.
 - `server.port` is optional and can be overridden at the CLI.
 
 ## Important Exports and Classes
