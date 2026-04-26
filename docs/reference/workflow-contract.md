@@ -38,6 +38,7 @@ Current front matter sections used by the implementation:
 | `hooks` | Shell hooks around workspace create/run/remove lifecycle |
 | `agent` | Concurrency, retry backoff, and max-turn controls |
 | `codex` | Codex launch command, optional model/personality overrides, and sandbox/timeout settings |
+| `screenshots` | Optional Playwright screenshot capture and ClickUp attachment limits |
 | `server` | Optional local HTTP server port |
 
 Environment precedence:
@@ -56,6 +57,15 @@ Notable `codex` keys beyond the launch command:
 - `codex.service_name`
 
 These let the workflow describe app-server request defaults without forcing those values to be hard-coded into `codex.command`.
+
+Notable `screenshots` keys:
+
+- `screenshots.enabled`
+- `screenshots.output_dir`
+- `screenshots.max_files_per_attempt`
+- `screenshots.max_file_bytes`
+
+When enabled, Symphony advertises a Codex tool for local review screenshots. Relative screenshot output paths resolve under `workspace.root`, outside the cloned task repository.
 
 Template variables available to the prompt body:
 

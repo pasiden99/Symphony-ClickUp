@@ -124,6 +124,12 @@ function baseConfig(root: string, workspaceId: string): EffectiveConfig {
       readTimeoutMs: 2_000,
       stallTimeoutMs: 10_000
     },
+    screenshots: {
+      enabled: false,
+      outputDir: path.join(root, ".symphony-artifacts/screenshots"),
+      maxFilesPerAttempt: 8,
+      maxFileBytes: 10 * 1024 * 1024
+    },
     server: {
       port: null
     }

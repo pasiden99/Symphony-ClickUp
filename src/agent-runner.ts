@@ -104,7 +104,9 @@ export class AgentRunner {
           currentIssue: {
             id: issue.id,
             identifier: issue.identifier
-          }
+          },
+          workspacePath: workspace.path,
+          screenshots: this.config.screenshots
         })
       );
       session = await raceAbort(

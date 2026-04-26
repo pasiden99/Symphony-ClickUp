@@ -60,6 +60,7 @@ Before you start, make sure you have:
 Optional but useful:
 
 - GitHub CLI (`gh`) for PR-related steps inside your workflow prompt
+- Playwright Chromium browsers (`npx playwright install chromium`) for opt-in review screenshots
 
 ## Quick Start
 
@@ -67,6 +68,12 @@ Optional but useful:
 
 ```bash
 npm install
+```
+
+If you plan to enable review screenshots, also install the Chromium browser used by Playwright:
+
+```bash
+npx playwright install chromium
 ```
 
 ### 2. Create your local environment file
@@ -370,6 +377,29 @@ codex:
 
 Use whatever Codex launch command matches your environment. Prefer keeping model and effort settings in the explicit workflow keys unless you have a shell-specific reason to inline them into `codex.command`.
 
+### `screenshots`
+
+Review screenshots are opt-in. When enabled, Symphony advertises a first-party Codex tool that captures a local browser page with Playwright, uploads the PNG to the ClickUp task as an attachment, and adds a `## Codex Screenshot` comment.
+
+| Key | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `screenshots.enabled` | No | `false` | Enables the screenshot dynamic tool |
+| `screenshots.output_dir` | No | `.symphony-artifacts/screenshots` | Relative paths resolve under `workspace.root`, not inside a task repo |
+| `screenshots.max_files_per_attempt` | No | `8` | Maximum screenshots one Codex attempt may attach |
+| `screenshots.max_file_bytes` | No | `10485760` | Maximum PNG size before upload |
+
+Example:
+
+```yaml
+screenshots:
+  enabled: true
+  output_dir: .symphony-artifacts/screenshots
+  max_files_per_attempt: 8
+  max_file_bytes: 10485760
+```
+
+The screenshot tool only accepts local review URLs: `localhost`, `127.0.0.1`, `[::1]`, or `file://` paths inside the active workspace. Codex is still responsible for starting the target app with the target repository's existing scripts when a visual screenshot is applicable.
+
 ### `server`
 
 | Key | Required | Default | Notes |
@@ -429,6 +459,7 @@ These tools are:
 - `clickup_update_task`
 - `clickup_get_task_comments`
 - `clickup_create_task_comment`
+- `clickup_capture_review_screenshot` when `screenshots.enabled` is true
 
 This is useful because your workflow prompt can instruct Codex to:
 
@@ -436,6 +467,7 @@ This is useful because your workflow prompt can instruct Codex to:
 - add worklog comments
 - update task status
 - update the task description
+- attach browser screenshots for local visual review
 
 ## Scripts
 
@@ -445,6 +477,12 @@ This is useful because your workflow prompt can instruct Codex to:
 | `npm start` | Run the compiled CLI |
 | `npm run typecheck` | Run TypeScript checks without building |
 | `npm test` | Run the Vitest test suite |
+
+The real Chromium screenshot smoke test is gated because it requires installed Playwright browsers:
+
+```bash
+RUN_PLAYWRIGHT_SCREENSHOT_TEST=1 npm test -- tests/screenshot-capturer.test.ts
+```
 
 ## Recommended First Run
 

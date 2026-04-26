@@ -27,6 +27,7 @@ export function resolveEffectiveConfig(
   const hooks = asObject(root.hooks);
   const agent = asObject(root.agent);
   const codex = asObject(root.codex);
+  const screenshots = asObject(root.screenshots);
   const server = asObject(root.server);
 
   const trackerKind = typeof tracker.kind === "string" ? tracker.kind.trim().toLowerCase() : "";
@@ -71,6 +72,11 @@ export function resolveEffectiveConfig(
     path.join(os.tmpdir(), "symphony_workspaces");
 
   const workspaceRoot = expandPathLike(workspaceRootRaw, env, cwd);
+  const screenshotOutputDir = resolveScreenshotOutputDir(
+    screenshots.output_dir ?? ".symphony-artifacts/screenshots",
+    env,
+    workspaceRoot
+  );
   const trackerEndpoint =
     resolveEnvBackedString(tracker.endpoint ?? "https://api.clickup.com/api/v2", env) ??
     "https://api.clickup.com/api/v2";
@@ -127,6 +133,12 @@ export function resolveEffectiveConfig(
       turnTimeoutMs: positiveOrFallback(codex.turn_timeout_ms, 3_600_000),
       readTimeoutMs: positiveOrFallback(codex.read_timeout_ms, 5_000),
       stallTimeoutMs: coerceInteger(codex.stall_timeout_ms, 300_000)
+    },
+    screenshots: {
+      enabled: coerceBoolean(screenshots.enabled, false),
+      outputDir: screenshotOutputDir,
+      maxFilesPerAttempt: positiveOrFallback(screenshots.max_files_per_attempt, 8),
+      maxFileBytes: positiveOrFallback(screenshots.max_file_bytes, 10 * 1024 * 1024)
     },
     server: {
       port: parseOptionalPort(server.port)
@@ -215,9 +227,40 @@ function parseOptionalPort(value: unknown): number | null {
   return port;
 }
 
+function resolveScreenshotOutputDir(value: unknown, env: NodeJS.ProcessEnv, workspaceRoot: string): string {
+  const resolved = resolveEnvBackedString(value, env) ?? ".symphony-artifacts/screenshots";
+  if (path.isAbsolute(resolved)) {
+    return path.normalize(resolved);
+  }
+
+  if (resolved.startsWith("~")) {
+    return expandPathLike(resolved, env, workspaceRoot);
+  }
+
+  return path.resolve(workspaceRoot, resolved);
+}
+
 function positiveOrFallback(value: unknown, fallback: number): number {
   const parsed = coerceInteger(value, fallback);
   return parsed > 0 ? parsed : fallback;
+}
+
+function coerceBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
 }
 
 function uniqueStrings(values: string[], fallback: string[]): string[] {

@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, test } from "vitest";
 
@@ -33,6 +34,14 @@ describe("config resolution", () => {
     expect(config.tracker.endpoint).toBe("https://api.clickup.com/api/v2");
     expect(config.agent.maxTurns).toBe(20);
     expect(config.workspace.root).toContain("symphony_workspaces");
+    expect(config.screenshots).toMatchObject({
+      enabled: false,
+      maxFilesPerAttempt: 8,
+      maxFileBytes: 10 * 1024 * 1024
+    });
+    expect(config.screenshots.outputDir).toBe(
+      path.join(config.workspace.root, ".symphony-artifacts/screenshots")
+    );
   });
 
   test("requires at least one clickup scope filter", () => {
@@ -106,5 +115,38 @@ describe("config resolution", () => {
     expect(config.codex.reasoningEffort).toBe("xhigh");
     expect(config.codex.personality).toBe("pragmatic");
     expect(config.codex.serviceName).toBe("symphony-tests");
+  });
+
+  test("resolves opt-in screenshot config under the workspace root", () => {
+    const config = resolveEffectiveConfig(
+      {
+        ...baseWorkflow,
+        config: {
+          ...baseWorkflow.config,
+          workspace: {
+            root: "/tmp/symphony-workspaces"
+          },
+          screenshots: {
+            enabled: true,
+            output_dir: ".review/screens",
+            max_files_per_attempt: 3,
+            max_file_bytes: 4096
+          }
+        }
+      },
+      {
+        cwd: "/tmp/repo",
+        env: {
+          CLICKUP_API_TOKEN: "token-123"
+        }
+      }
+    );
+
+    expect(config.screenshots).toEqual({
+      enabled: true,
+      outputDir: "/tmp/symphony-workspaces/.review/screens",
+      maxFilesPerAttempt: 3,
+      maxFileBytes: 4096
+    });
   });
 });

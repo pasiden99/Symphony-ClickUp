@@ -63,6 +63,13 @@ export interface CodexConfig {
   stallTimeoutMs: number;
 }
 
+export interface ScreenshotConfig {
+  enabled: boolean;
+  outputDir: string;
+  maxFilesPerAttempt: number;
+  maxFileBytes: number;
+}
+
 export interface ClickUpTrackerConfig {
   kind: "clickup";
   endpoint: string;
@@ -89,6 +96,7 @@ export interface EffectiveConfig {
   hooks: HookConfig;
   agent: AgentConfig;
   codex: CodexConfig;
+  screenshots: ScreenshotConfig;
   server: ServerConfig;
 }
 

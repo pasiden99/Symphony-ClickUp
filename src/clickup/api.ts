@@ -30,6 +30,7 @@ export interface ClickUpRequestOptions {
   method: "GET" | "POST" | "PUT";
   query?: Record<string, string | string[] | undefined>;
   body?: Record<string, unknown>;
+  formData?: FormData;
   invalidJsonCode?: string;
   networkFailureCode?: string;
   onResponse?: (meta: ClickUpResponseMeta) => void;
@@ -59,6 +60,10 @@ export class ClickUpApiClient {
   }
 
   async request(pathname: string, options: ClickUpRequestOptions): Promise<Response> {
+    if (options.body && options.formData) {
+      throw new SymphonyError("clickup_invalid_request", "ClickUp request cannot include both JSON and multipart bodies");
+    }
+
     const url = buildClickUpApiUrl(this.config.endpoint, pathname);
     for (const [key, rawValue] of Object.entries(options.query ?? {})) {
       if (rawValue === undefined) {
@@ -89,6 +94,8 @@ export class ClickUpApiClient {
       };
       if (options.body) {
         requestInit.body = JSON.stringify(options.body);
+      } else if (options.formData) {
+        requestInit.body = options.formData;
       }
 
       response = await this.fetchImpl(url, requestInit);

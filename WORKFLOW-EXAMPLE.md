@@ -51,6 +51,11 @@ codex:
     network_access: true
     exclude_tmpdir_env_var: false
     exclude_slash_tmp: false
+screenshots:
+  enabled: false
+  output_dir: .symphony-artifacts/screenshots
+  max_files_per_attempt: 8
+  max_file_bytes: 10485760
 server:
   port: 3000
 ---
@@ -101,6 +106,7 @@ Preferred ClickUp tools:
 - `clickup_update_task`
 - `clickup_get_task_comments`
 - `clickup_create_task_comment`
+- `clickup_capture_review_screenshot` when `screenshots.enabled` is true
 
 Forbidden ClickUp tools:
 
@@ -113,7 +119,8 @@ Use these tools when you need to:
 - read task comments and prior handoff notes,
 - change task status,
 - update the task description or markdown description,
-- add progress or blocker comments.
+- add progress or blocker comments,
+- capture and attach local browser screenshots for visually reviewable changes when enabled.
 
 Use these exact argument shapes:
 
@@ -121,6 +128,7 @@ Use these exact argument shapes:
 - `clickup_get_task_comments({ "taskId": "{{ issue.clickup_task_id }}" })`
 - `clickup_update_task({ "taskId": "{{ issue.clickup_task_id }}", ... })`
 - `clickup_create_task_comment({ "taskId": "{{ issue.clickup_task_id }}", "commentText": "..." })`
+- `clickup_capture_review_screenshot({ "taskId": "{{ issue.clickup_task_id }}", "url": "http://localhost:3000/route", "label": "Short review label" })`
 
 If a required ClickUp tool call fails, stop early, leave the repository unchanged if possible, and report the blocker in the final message.
 
@@ -189,9 +197,10 @@ If a required ClickUp tool call fails, stop early, leave the repository unchange
    - Execute all task-provided `Validation`, `Test Plan`, or `Testing` requirements when present.
    - Prefer targeted proof that directly demonstrates the changed behavior.
    - Revert every temporary proof edit before commit or push.
-4. Before every `git push`, rerun the required validation for your scope and confirm it passes.
-5. If a PR exists, gather and resolve all actionable review feedback before declaring the task ready.
-6. When implementation and validation are complete:
+4. If screenshots are enabled and the change is visually reviewable, start the local app using existing repo scripts, call `clickup_capture_review_screenshot` for the changed view, and let the tool attach the PNG plus a `## Codex Screenshot` comment. Use only local URLs such as `localhost`, `127.0.0.1`, `[::1]`, or workspace-local `file://` URLs. If screenshots are not applicable or cannot be captured, record the reason in the final worklog comment.
+5. Before every `git push`, rerun the required validation for your scope and confirm it passes.
+6. If a PR exists, gather and resolve all actionable review feedback before declaring the task ready.
+7. When implementation and validation are complete:
    - ensure the PR URL is visible from the task context or a task comment,
    - add a final ClickUp worklog comment summarizing completed work and validation,
    - call `clickup_update_task` to move the task to `Human Review`.

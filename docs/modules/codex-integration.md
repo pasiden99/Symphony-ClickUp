@@ -45,11 +45,12 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
    - `requestUserInput` requests receive empty answers, mark the turn as needing input, and emit `turn_input_required`,
    - `tool/call` requests are routed through `DynamicToolHandler`,
    - unsupported requests get a simple error result.
-10. `ClickUpDynamicToolHandler` exposes four tools:
+10. `ClickUpDynamicToolHandler` exposes ClickUp tools:
    - `clickup_get_task`
    - `clickup_update_task`
    - `clickup_get_task_comments`
    - `clickup_create_task_comment`
+   - `clickup_capture_review_screenshot` when `screenshots.enabled` is true
 11. Tool responses are wrapped as `DynamicToolResponse` objects with JSON-serialized `contentItems` so the app-server can feed them back into the turn.
 12. `close()` tears down pending requests, rejects active work, sends `SIGTERM`, waits briefly, then escalates to `SIGKILL` if needed.
 
@@ -72,6 +73,9 @@ Dynamic tool behavior details:
 
 - `clickup_update_task` accepts `status`, `name`, `description`, and `markdownDescription`.
 - `clickup_get_task_comments` accepts optional pagination via `start` and `startId`.
+- `clickup_capture_review_screenshot` accepts a local URL, label, optional viewport, full-page flag, and wait delay.
+- Review screenshots are captured with Playwright, stored under the configured artifact directory, uploaded to ClickUp as task attachments, and followed by a `## Codex Screenshot` comment.
+- Screenshot URLs are restricted to local app URLs and workspace-local `file://` paths.
 - `resolveTaskId()` transparently converts the current Symphony issue identifier into the raw ClickUp task ID when needed.
 - Tool-call errors are surfaced as structured failure JSON instead of throwing across the app-server boundary.
 
@@ -110,6 +114,7 @@ Dynamic tool behavior details:
 - That failed turn is mapped upstream to a blocked scheduler state instead of an immediate retry.
 - Unsupported tool calls return a structured failure payload instead of crashing the session.
 - ClickUp API failures inside `ClickUpDynamicToolHandler` return tool-level failure JSON and are logged as `dynamic_tool_call_failed`.
+- Screenshot capture failures, invalid remote URLs, file-size limit failures, and ClickUp attachment upload failures return tool-level failure JSON.
 
 ## Related Tests
 - `tests/codex-client.test.ts`

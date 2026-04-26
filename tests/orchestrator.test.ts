@@ -364,6 +364,12 @@ function baseConfig(): EffectiveConfig {
       readTimeoutMs: 1000,
       stallTimeoutMs: 10_000
     },
+    screenshots: {
+      enabled: false,
+      outputDir: "/tmp/workspaces/.symphony-artifacts/screenshots",
+      maxFilesPerAttempt: 8,
+      maxFileBytes: 10 * 1024 * 1024
+    },
     server: {
       port: null
     }
