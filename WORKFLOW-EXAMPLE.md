@@ -211,7 +211,9 @@ If a required ClickUp tool call fails, stop early, leave the repository unchange
 2. Poll for updates as needed, including PR review comments from humans and bots.
 3. If review feedback requires changes, move the task to `Rework` and resume the implementation flow.
 4. When the task is in `Merging`, confirm approval and green checks.
-5. Merge the PR if permissions allow, then move the task to `Done`.
+5. Before merging, verify the PR is mergeable and has no conflicts using GitHub/`gh` or a local fetch/rebase/merge check.
+6. If conflicts exist, do not merge. Add a ClickUp blocker comment and move the task to `Rework` unless the current task instructions require a different conflict-resolution route.
+7. Merge the PR if permissions allow, then move the task to `Done`.
 
 ## Step 4: Rework handling
 
