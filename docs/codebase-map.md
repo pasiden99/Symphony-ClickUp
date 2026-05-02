@@ -22,11 +22,12 @@ Annotated authored tree:
 .
 ├── .env.example                          # Checked-in environment example used by setup docs and workflow examples.
 ├── .gitignore                            # Git ignore rules for generated output, logs, local env files, and local `WORKFLOW.md`.
-├── DROID_MEM_AGENT_INSTRUCTIONS.md       # Project guidance for droid-mem-enabled agents.
+├── CHANGELOG.md                          # Version history and user-visible release notes.
+├── CONTRIBUTING.md                       # Contributor setup, validation, PR, and docs guidance.
 ├── README.md                             # Operator-facing product, setup, and runtime usage guide.
+├── SECURITY.md                           # Security reporting, secret handling, and runtime safety guidance.
 ├── SPEC.md                               # Small forwarding stub to the archived legacy spec under docs/reference/.
 ├── WORKFLOW-EXAMPLE.md                   # Example workflow contract with ClickUp + Codex settings.
-├── WORKFLOW.md                           # Local active workflow used when running Symphony in this checkout; intentionally ignored by Git.
 ├── docs/
 │   ├── README.md                         # Documentation hub and reading order.
 │   ├── codebase-map.md                   # This file.
@@ -42,8 +43,14 @@ Annotated authored tree:
 │   ├── reference/
 │   │   ├── legacy-spec.md                # Archived historical specification from the former root SPEC.md.
 │   │   └── workflow-contract.md          # Current `WORKFLOW.md` and env contract.
-│   └── testing/
-│       └── test-map.md                   # Vitest suite map and fixture coverage.
+│   ├── testing/
+│   │   └── test-map.md                   # Vitest suite map and fixture coverage.
+│   └── user-guide/
+│       ├── README.md                     # User-guide index for operator-facing docs.
+│       ├── compatibility.md              # Runtime and integration compatibility matrix.
+│       ├── configuration.md              # Operator-facing workflow, env, prompt, and tool reference.
+│       ├── operations.md                 # Runtime behavior, dashboard/API, scripts, and first-run checklist.
+│       └── troubleshooting.md            # Common setup, runtime, dependency, and integration fixes.
 ├── package-lock.json                     # Locked npm dependency graph for reproducible installs.
 ├── package.json                          # Package metadata, runtime dependencies, scripts, and CLI bin mapping.
 ├── src/
@@ -92,6 +99,7 @@ Generated or local-only paths that appear in this checkout:
 - `node_modules/`: installed npm dependencies.
 - `.env.local`: local secrets and machine-specific overrides, intentionally ignored by Git.
 - `WORKFLOW.md`: local runtime workflow file, intentionally ignored so operators can keep machine-specific state out of version control.
+- `DROID_MEM_AGENT_INSTRUCTIONS.md`: local agent instructions, intentionally ignored by Git.
 - `.DS_Store`: macOS Finder metadata, not part of the authored project.
 
 ## Important Exports and Classes

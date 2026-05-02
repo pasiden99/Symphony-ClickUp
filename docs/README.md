@@ -12,6 +12,11 @@ This directory is the maintainers' map of the Symphony codebase. It supplements 
 - `docs/modules/codex-integration.md`
 - `docs/modules/clickup-integration.md`
 - `docs/modules/http-dashboard.md`
+- `docs/user-guide/README.md`
+- `docs/user-guide/compatibility.md`
+- `docs/user-guide/configuration.md`
+- `docs/user-guide/operations.md`
+- `docs/user-guide/troubleshooting.md`
 - `docs/testing/test-map.md`
 - `docs/reference/workflow-contract.md`
 - `docs/reference/legacy-spec.md`
@@ -36,7 +41,12 @@ Recommended reading order:
    - [HTTP Dashboard](./modules/http-dashboard.md)
 5. Use [Test Map](./testing/test-map.md) to see what behavior is covered by Vitest and where coverage is thin.
 6. Use [Workflow Contract](./reference/workflow-contract.md) for the repository-owned `WORKFLOW.md` interface.
-7. Use [Legacy Spec](./reference/legacy-spec.md) only for historical background.
+7. Use [User Guide](./user-guide/README.md) and its pages for operator-facing details:
+   - [Compatibility](./user-guide/compatibility.md)
+   - [Configuration](./user-guide/configuration.md)
+   - [Operations](./user-guide/operations.md)
+   - [Troubleshooting](./user-guide/troubleshooting.md)
+8. Use [Legacy Spec](./reference/legacy-spec.md) only for historical background.
 
 Documentation conventions:
 
@@ -84,4 +94,9 @@ Primary runtime entrypoints worth knowing before diving into subsystem pages:
 - [HTTP Dashboard](./modules/http-dashboard.md)
 - [Test Map](./testing/test-map.md)
 - [Workflow Contract](./reference/workflow-contract.md)
+- [User Guide](./user-guide/README.md)
+- [Compatibility](./user-guide/compatibility.md)
+- [Configuration](./user-guide/configuration.md)
+- [Operations](./user-guide/operations.md)
+- [Troubleshooting](./user-guide/troubleshooting.md)
 - [Legacy Spec](./reference/legacy-spec.md)

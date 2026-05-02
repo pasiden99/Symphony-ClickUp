@@ -43,24 +43,32 @@ Typical flow:
 - A ClickUp tracker client.
 - A local HTML dashboard and JSON API.
 - Internal implementation docs: [`docs/README.md`](./docs/README.md)
+- User guide docs: [`docs/user-guide/`](./docs/user-guide/)
 - An example workflow file: [`WORKFLOW-EXAMPLE.md`](./WORKFLOW-EXAMPLE.md)
 - A sample environment file: [`.env.example`](./.env.example)
+- Contributor docs: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](./SECURITY.md)
+- Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## Requirements
 
 Before you start, make sure you have:
 
-- Node.js 20 or newer
-- npm
-- Git
-- A ClickUp API token
-- A Codex CLI installation that supports `app-server` in the same shell Symphony will use
-- Access to the repository Symphony should clone into each task workspace
+| Requirement | Needed for | Notes |
+| --- | --- | --- |
+| Node.js 20 or newer | all local development and runtime use | `package.json` declares `>=20` |
+| npm | dependency installation and scripts | use the checked-in `package-lock.json` |
+| Git | repository checkout and typical workspace hooks | the example workflow clones a target repository |
+| ClickUp API token | real ClickUp polling and task updates | set as `CLICKUP_API_TOKEN` |
+| Codex CLI with `app-server` support | running agents | must work in the same shell Symphony uses |
+| Target repository access | task workspaces | needed by the repository clone hook in the example workflow |
 
 Optional but useful:
 
 - GitHub CLI (`gh`) for PR-related steps inside your workflow prompt
 - Playwright Chromium browsers (`npx playwright install chromium`) for opt-in review screenshots
+
+See the [Compatibility Guide](./docs/user-guide/compatibility.md) for version and integration details.
 
 ## Quick Start
 
@@ -240,234 +248,18 @@ These runtime rules are built into the app:
 - Changes to `WORKFLOW.md` are reloaded automatically while Symphony is running.
 - If you change the HTTP port, restart Symphony. The server does not re-bind to a new port automatically.
 
-## Dashboard and API
+## User Guide
 
-When the HTTP server is enabled, Symphony binds to `127.0.0.1` only.
+The root README is the quick-start path. Detailed operator docs live under `docs/user-guide/`:
 
-Available routes:
-
-| Route | Method | What it does |
-| --- | --- | --- |
-| `/` | `GET` | Human-friendly HTML dashboard |
-| `/api/v1/state` | `GET` | Full runtime snapshot as JSON |
-| `/api/v1/events` | `GET` | Server-sent event stream of runtime snapshots for live dashboard updates |
-| `/api/v1/:issue_identifier` | `GET` | Status for one Symphony issue identifier such as `CU-123` |
-| `/api/v1/refresh` | `POST` | Queue an immediate poll/reconcile cycle |
-
-The dashboard uses `EventSource` against `/api/v1/events`, so counts and tables update live without a manual refresh.
-
-Examples:
-
-```bash
-curl http://127.0.0.1:3000/api/v1/state
-```
-
-```bash
-curl -N http://127.0.0.1:3000/api/v1/events
-```
-
-```bash
-curl http://127.0.0.1:3000/api/v1/CU-123
-```
-
-```bash
-curl -X POST http://127.0.0.1:3000/api/v1/refresh
-```
-
-## Configuration Reference
-
-All runtime config lives in the YAML front matter of `WORKFLOW.md`.
-
-### `tracker`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `tracker.kind` | Yes | none | Must be `clickup` |
-| `tracker.endpoint` | No | `https://api.clickup.com/api/v2` | Base ClickUp API URL |
-| `tracker.api_key` | Yes | `$CLICKUP_API_TOKEN` | Can be a literal string or env reference |
-| `tracker.workspace_id` | Yes | none | ClickUp Workspace/team ID |
-| `tracker.space_ids` | No | empty | Optional ClickUp Space filters |
-| `tracker.folder_ids` | No | empty | Optional ClickUp Folder filters |
-| `tracker.list_ids` | No | empty | Optional ClickUp List filters |
-| `tracker.active_states` | No | `Todo`, `In Progress` | Statuses Symphony should work on |
-| `tracker.terminal_states` | No | `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done` | Statuses that stop work and trigger cleanup |
-
-Important:
-
-- You must provide at least one scope filter: `space_ids`, `folder_ids`, or `list_ids`.
-- State matching is case-insensitive.
-
-### `polling`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `polling.interval_ms` | No | `30000` | How often Symphony polls ClickUp |
-
-### `workspace`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `workspace.root` | No | system temp directory + `symphony_workspaces` | Parent folder for per-task workspaces |
-
-Path behavior:
-
-- `~` expands to your home directory
-- `$VAR` reads from the environment
-- relative paths are resolved from the current working directory
-
-### `hooks`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `hooks.after_create` | No | none | Runs once when a new workspace is created |
-| `hooks.before_run` | No | none | Runs before every attempt |
-| `hooks.after_run` | No | none | Runs after every attempt |
-| `hooks.before_remove` | No | none | Runs before a workspace is deleted |
-| `hooks.timeout_ms` | No | `60000` | Timeout for all hooks |
-
-Hook behavior:
-
-- `after_create` failure is fatal and the new workspace is removed
-- `before_run` failure is fatal for that attempt
-- `after_run` failure is logged but does not fail the run
-- `before_remove` failure is logged but cleanup continues
-
-Hooks run in your login shell (`$SHELL`, falling back to `bash`).
-
-### `agent`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `agent.max_concurrent_agents` | No | `10` | Global task concurrency |
-| `agent.max_concurrent_agents_by_state` | No | `{}` | Optional per-status concurrency overrides |
-| `agent.max_retry_backoff_ms` | No | `300000` | Maximum retry backoff |
-| `agent.max_turns` | No | `20` | Maximum Codex turns per dispatch |
-
-Retry behavior:
-
-- first retry waits about 10 seconds
-- later retries back off exponentially until `max_retry_backoff_ms`
-
-### `codex`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `codex.command` | No | `codex app-server` | Command Symphony launches for each workspace |
-| `codex.model` | No | unset | Optional app-server model override passed on `thread/start` and `turn/start` |
-| `codex.reasoning_effort` | No | unset | Optional turn effort override passed as `effort` on `turn/start` |
-| `codex.personality` | No | unset | Optional Codex personality override |
-| `codex.service_name` | No | unset | Optional service label passed on `thread/start` |
-| `codex.approval_policy` | No | `never` | Passed through to Codex |
-| `codex.thread_sandbox` | No | `workspace-write` | Passed through to Codex when the thread starts |
-| `codex.turn_sandbox_policy` | No | `{ type: "workspace-write" }` | Passed through for each turn |
-| `codex.turn_timeout_ms` | No | `3600000` | Maximum time for a single turn |
-| `codex.read_timeout_ms` | No | `5000` | RPC request/response timeout |
-| `codex.stall_timeout_ms` | No | `300000` | Cancels a run if no Codex event is seen within this window |
-
-The example workflow keeps the shell command focused on launching app-server, and puts model-level overrides in explicit workflow keys:
-
-```yaml
-codex:
-  command: codex --config shell_environment_policy.inherit=all app-server
-  model: gpt-5.3-codex
-  reasoning_effort: xhigh
-  personality: pragmatic
-  service_name: symphony
-```
-
-Use whatever Codex launch command matches your environment. Prefer keeping model and effort settings in the explicit workflow keys unless you have a shell-specific reason to inline them into `codex.command`.
-
-### `screenshots`
-
-Review screenshots are opt-in. When enabled, Symphony advertises a first-party Codex tool that captures a local browser page with Playwright, uploads the PNG to the ClickUp task as an attachment, and adds a `## Codex Screenshot` comment.
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `screenshots.enabled` | No | `false` | Enables the screenshot dynamic tool |
-| `screenshots.output_dir` | No | `.symphony-artifacts/screenshots` | Relative paths resolve under `workspace.root`, not inside a task repo |
-| `screenshots.max_files_per_attempt` | No | `8` | Maximum screenshots one Codex attempt may attach |
-| `screenshots.max_file_bytes` | No | `10485760` | Maximum PNG size before upload |
-
-Example:
-
-```yaml
-screenshots:
-  enabled: true
-  output_dir: .symphony-artifacts/screenshots
-  max_files_per_attempt: 8
-  max_file_bytes: 10485760
-```
-
-The screenshot tool only accepts local review URLs: `localhost`, `127.0.0.1`, `[::1]`, or `file://` paths inside the active workspace. Codex is still responsible for starting the target app with the target repository's existing scripts when a visual screenshot is applicable.
-
-### `server`
-
-| Key | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `server.port` | No | disabled | Starts the local dashboard/API on this port |
-
-You can also set the port at runtime with `--port`. The CLI value overrides `server.port`.
-
-## Prompt Template Variables
-
-The body of `WORKFLOW.md` is rendered with Liquid templates.
-
-Available values include:
-
-| Variable | Meaning |
+| Guide | What it covers |
 | --- | --- |
-| `issue.id` | Raw ClickUp task ID |
-| `issue.clickup_task_id` | Same as `issue.id` |
-| `issue.identifier` | Symphony issue identifier, such as `CU-123` |
-| `issue.title` | Task title |
-| `issue.description` | Task description |
-| `issue.priority` | Normalized priority if available |
-| `issue.state` | Current ClickUp status |
-| `issue.url` | Task URL |
-| `issue.labels` | Lowercased ClickUp tags |
-| `issue.blocked_by` | Blocker list with `id`, `identifier`, and `state` |
-| `issue.created_at` | Creation time |
-| `issue.updated_at` | Update time |
-| `attempt` | `null` on first dispatch, then a retry/continuation number |
+| [Compatibility](./docs/user-guide/compatibility.md) | Node, npm, ClickUp, Codex, Git, and Playwright assumptions |
+| [Configuration](./docs/user-guide/configuration.md) | `WORKFLOW.md`, environment files, prompt variables, and built-in ClickUp tools |
+| [Operations](./docs/user-guide/operations.md) | runtime behavior, dashboard routes, API examples, scripts, and first-run checklist |
+| [Troubleshooting](./docs/user-guide/troubleshooting.md) | common setup, runtime, Codex, and dependency problems |
 
-Example:
-
-```md
-You are working on ClickUp task {{ issue.identifier }}.
-
-Title: {{ issue.title }}
-Status: {{ issue.state }}
-
-{% if attempt %}
-This is retry attempt #{{ attempt }}.
-{% endif %}
-```
-
-If the prompt body is empty, Symphony falls back to:
-
-```text
-You are working on an issue from ClickUp.
-```
-
-## Built-In ClickUp Tools for Codex
-
-Symphony can advertise first-party ClickUp tools to Codex during a run.
-
-These tools are:
-
-- `clickup_get_task`
-- `clickup_update_task`
-- `clickup_get_task_comments`
-- `clickup_create_task_comment`
-- `clickup_capture_review_screenshot` when `screenshots.enabled` is true
-
-This is useful because your workflow prompt can instruct Codex to:
-
-- read the latest task details
-- add worklog comments
-- update task status
-- update the task description
-- attach browser screenshots for local visual review
+For implementation-oriented docs, start with [`docs/README.md`](./docs/README.md).
 
 ## Scripts
 
@@ -484,81 +276,6 @@ The real Chromium screenshot smoke test is gated because it requires installed P
 RUN_PLAYWRIGHT_SCREENSHOT_TEST=1 npm test -- tests/screenshot-capturer.test.ts
 ```
 
-## Recommended First Run
-
-If you are setting this up for the first time, this order works well:
-
-1. `npm install`
-2. `cp .env.example .env.local`
-3. `cp WORKFLOW-EXAMPLE.md WORKFLOW.md`
-4. Fill in your ClickUp IDs and token
-5. Build with `npm run build`
-6. Start with `npm start -- --port 3000`
-7. Open the dashboard and confirm Symphony sees the expected tasks
-
-## Troubleshooting
-
-### Symphony starts but does not pick up any tasks
-
-Check:
-
-- the ClickUp token is valid
-- `tracker.workspace_id` is correct
-- at least one of `list_ids`, `space_ids`, or `folder_ids` is set
-- the task status exactly matches one of your `active_states`
-- the task is not blocked by a non-terminal dependency if it is in `Todo`
-
-### The workspace folder is empty
-
-Symphony only creates the directory. Your hook must populate it. If you expect a cloned repo, check `hooks.after_create`.
-
-### The dashboard does not open
-
-Check:
-
-- `server.port` is set in `WORKFLOW.md`, or you started Symphony with `--port`
-- the port is not already in use
-- you are opening `127.0.0.1`, not a remote host
-
-### Tasks keep retrying
-
-That usually means one of these:
-
-- Codex failed to complete a turn
-- a hook failed
-- ClickUp polling failed
-- the run stalled and exceeded `codex.stall_timeout_ms`
-
-Set `LOG_LEVEL=debug` for more detail.
-
-### Codex exits immediately with a missing optional dependency
-
-If the retry error mentions a missing package such as `@openai/codex-darwin-x64` or `@openai/codex-darwin-arm64`, reinstall Codex in the same Node environment Symphony uses:
-
-```bash
-nvm use <your-node-version>
-npm uninstall -g @openai/codex
-npm install -g @openai/codex@latest --include=optional
-hash -r
-codex --version
-```
-
-If you do not use `nvm`, activate whatever Node installation provides `codex` first. If `codex --version` still fails, check whether npm is omitting optional dependencies with `npm config get omit`.
-
-### A task stopped retrying after asking for input
-
-If Codex requests interactive input during an unattended run, Symphony now treats the issue as blocked instead of retrying the same attempt immediately.
-
-Symphony will try the task again only after the ClickUp task changes, such as a status update, description edit, or comment that updates the task timestamp.
-
-### Codex can work locally but cannot handle GitHub PR steps
-
-Symphony checks for GitHub CLI availability and authentication. If `gh` is missing or not authenticated, PR-related workflow steps may stop early.
-
-### I changed `WORKFLOW.md` but the dashboard port did not change
-
-Workflow content is reloaded automatically, but the HTTP server does not move to a new port until Symphony is restarted.
-
 ## Development Notes
 
 - Source files live in [`src/`](./src).
@@ -566,6 +283,8 @@ Workflow content is reloaded automatically, but the HTTP server does not move to
 - The CLI entry point is [`src/cli.ts`](./src/cli.ts).
 - The service bootstrapping logic is in [`src/service.ts`](./src/service.ts).
 - The orchestrator lives in [`src/orchestrator.ts`](./src/orchestrator.ts).
+- Contributor setup and pull request guidance live in [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+- Security reporting and runtime safety notes live in [`SECURITY.md`](./SECURITY.md).
 
 ## License
 
