@@ -56,6 +56,13 @@ screenshots:
   output_dir: .symphony-artifacts/screenshots
   max_files_per_attempt: 8
   max_file_bytes: 10485760
+audit:
+  enabled: true
+  output_dir: .symphony-artifacts/audit
+  max_recent_events: 500
+  max_event_bytes: 16384
+  retention_days: 14
+  include_raw_codex_events: false
 server:
   port: 3000
 ---

@@ -84,6 +84,16 @@ export class AgentRunner {
     try {
       const workspace = await this.workspaceManager.ensureForIssue(issue.identifier);
       workspacePath = workspace.path;
+      onEvent({
+        event: "workspace_ready",
+        timestamp: nowIso(),
+        message: workspace.createdNow ? "Workspace created" : "Workspace reused",
+        raw: {
+          workspacePath: workspace.path,
+          workspaceKey: workspace.workspaceKey,
+          createdNow: workspace.createdNow
+        }
+      });
 
       await this.workspaceManager.cleanupTransientArtifacts(workspace.path);
       await this.workspaceManager.runHook("beforeRun", workspace.path);

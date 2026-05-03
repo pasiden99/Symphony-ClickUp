@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import type { Logger } from "pino";
 
 import { AgentRunner } from "./agent-runner.js";
+import { JsonlAuditStore } from "./audit.js";
 import { resolveEffectiveConfig } from "./config.js";
 import { loadProjectEnv } from "./env.js";
 import { SymphonyError } from "./errors.js";
@@ -27,6 +28,7 @@ export class SymphonyService {
   private watcher: FSWatcher | null = null;
   private httpServer: ReturnType<typeof Fastify> | null = null;
   private orchestrator: Orchestrator | null = null;
+  private auditStore: JsonlAuditStore | null = null;
   private config: EffectiveConfig | null = null;
   private workflow: WorkflowDefinition | null = null;
 
@@ -45,13 +47,16 @@ export class SymphonyService {
     const trackerFactory = (nextConfig: EffectiveConfig) =>
       new ClickUpTrackerClient(nextConfig.tracker, this.logger);
     const agentRunner = new AgentRunner(config, trackerFactory, workspaceManager, this.logger);
+    const auditStore = new JsonlAuditStore(config.audit, this.logger);
+    await auditStore.initialize();
     const orchestrator = new Orchestrator(
       config,
       workflow,
       trackerFactory,
       workspaceManager,
       agentRunner,
-      this.logger
+      this.logger,
+      auditStore
     );
 
     await orchestrator.start();
@@ -63,6 +68,7 @@ export class SymphonyService {
 
     this.workflow = workflow;
     this.config = config;
+    this.auditStore = auditStore;
     this.orchestrator = orchestrator;
     this.watcher = watchWorkflow(
       this.workflowPath,
@@ -81,6 +87,8 @@ export class SymphonyService {
 
     await this.orchestrator?.stop();
     this.orchestrator = null;
+    await this.auditStore?.flush();
+    this.auditStore = null;
 
     if (this.httpServer) {
       await this.httpServer.close();

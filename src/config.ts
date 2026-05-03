@@ -28,6 +28,7 @@ export function resolveEffectiveConfig(
   const agent = asObject(root.agent);
   const codex = asObject(root.codex);
   const screenshots = asObject(root.screenshots);
+  const audit = asObject(root.audit);
   const server = asObject(root.server);
 
   const trackerKind = typeof tracker.kind === "string" ? tracker.kind.trim().toLowerCase() : "";
@@ -76,6 +77,12 @@ export function resolveEffectiveConfig(
     screenshots.output_dir ?? ".symphony-artifacts/screenshots",
     env,
     workspaceRoot
+  );
+  const auditOutputDir = resolveArtifactOutputDir(
+    audit.output_dir ?? ".symphony-artifacts/audit",
+    env,
+    workspaceRoot,
+    ".symphony-artifacts/audit"
   );
   const trackerEndpoint =
     resolveEnvBackedString(tracker.endpoint ?? "https://api.clickup.com/api/v2", env) ??
@@ -139,6 +146,14 @@ export function resolveEffectiveConfig(
       outputDir: screenshotOutputDir,
       maxFilesPerAttempt: positiveOrFallback(screenshots.max_files_per_attempt, 8),
       maxFileBytes: positiveOrFallback(screenshots.max_file_bytes, 10 * 1024 * 1024)
+    },
+    audit: {
+      enabled: coerceBoolean(audit.enabled, true),
+      outputDir: auditOutputDir,
+      maxRecentEvents: positiveOrFallback(audit.max_recent_events, 500),
+      maxEventBytes: positiveOrFallback(audit.max_event_bytes, 16_384),
+      retentionDays: positiveOrFallback(audit.retention_days, 14),
+      includeRawCodexEvents: coerceBoolean(audit.include_raw_codex_events, false)
     },
     server: {
       port: parseOptionalPort(server.port)
@@ -228,7 +243,11 @@ function parseOptionalPort(value: unknown): number | null {
 }
 
 function resolveScreenshotOutputDir(value: unknown, env: NodeJS.ProcessEnv, workspaceRoot: string): string {
-  const resolved = resolveEnvBackedString(value, env) ?? ".symphony-artifacts/screenshots";
+  return resolveArtifactOutputDir(value, env, workspaceRoot, ".symphony-artifacts/screenshots");
+}
+
+function resolveArtifactOutputDir(value: unknown, env: NodeJS.ProcessEnv, workspaceRoot: string, fallback: string): string {
+  const resolved = resolveEnvBackedString(value, env) ?? fallback;
   if (path.isAbsolute(resolved)) {
     return path.normalize(resolved);
   }

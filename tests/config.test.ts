@@ -42,6 +42,14 @@ describe("config resolution", () => {
     expect(config.screenshots.outputDir).toBe(
       path.join(config.workspace.root, ".symphony-artifacts/screenshots")
     );
+    expect(config.audit).toMatchObject({
+      enabled: true,
+      maxRecentEvents: 500,
+      maxEventBytes: 16_384,
+      retentionDays: 14,
+      includeRawCodexEvents: false
+    });
+    expect(config.audit.outputDir).toBe(path.join(config.workspace.root, ".symphony-artifacts/audit"));
   });
 
   test("requires at least one clickup scope filter", () => {
@@ -147,6 +155,43 @@ describe("config resolution", () => {
       outputDir: "/tmp/symphony-workspaces/.review/screens",
       maxFilesPerAttempt: 3,
       maxFileBytes: 4096
+    });
+  });
+
+  test("resolves audit config under the workspace root", () => {
+    const config = resolveEffectiveConfig(
+      {
+        ...baseWorkflow,
+        config: {
+          ...baseWorkflow.config,
+          workspace: {
+            root: "/tmp/symphony-workspaces"
+          },
+          audit: {
+            enabled: false,
+            output_dir: ".review/audit",
+            max_recent_events: 12,
+            max_event_bytes: 2048,
+            retention_days: 3,
+            include_raw_codex_events: true
+          }
+        }
+      },
+      {
+        cwd: "/tmp/repo",
+        env: {
+          CLICKUP_API_TOKEN: "token-123"
+        }
+      }
+    );
+
+    expect(config.audit).toEqual({
+      enabled: false,
+      outputDir: "/tmp/symphony-workspaces/.review/audit",
+      maxRecentEvents: 12,
+      maxEventBytes: 2048,
+      retentionDays: 3,
+      includeRawCodexEvents: true
     });
   });
 });

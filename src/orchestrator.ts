@@ -1,9 +1,13 @@
 import type { Logger } from "pino";
 
 import { AgentRunner } from "./agent-runner.js";
+import { createNoopAuditRecorder, type AuditRecorder } from "./audit.js";
 import { isActiveState, isTerminalState, perStateConcurrencyLimit, validateDispatchConfig } from "./config.js";
 import { SymphonyError } from "./errors.js";
 import type {
+  AuditEvent,
+  AuditEventPage,
+  AuditEventQuery,
   EffectiveConfig,
   Issue,
   IssueRuntimeSnapshot,
@@ -100,7 +104,8 @@ export class Orchestrator {
     private readonly trackerFactory: TrackerFactory,
     private readonly workspaceManager: WorkspaceManager,
     private readonly agentRunner: AgentRunner,
-    logger: Logger
+    logger: Logger,
+    private readonly audit: AuditRecorder = createNoopAuditRecorder()
   ) {
     this.logger = logger.child({ component: "orchestrator" });
     this.tracker = trackerFactory(config);
@@ -108,6 +113,16 @@ export class Orchestrator {
 
   async start(): Promise<void> {
     validateDispatchConfig(this.config);
+    void this.recordAudit({
+      level: "info",
+      category: "scheduler",
+      action: "service_started",
+      message: "Symphony orchestrator started",
+      data: {
+        workflowPath: this.workflow.filePath,
+        workspaceRoot: this.config.workspace.root
+      }
+    });
 
     try {
       await this.startupTerminalWorkspaceCleanup();
@@ -120,6 +135,16 @@ export class Orchestrator {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    void this.recordAudit({
+      level: "info",
+      category: "scheduler",
+      action: "service_stop_requested",
+      message: "Symphony orchestrator stopping",
+      data: {
+        running: this.running.size,
+        retrying: this.retryAttempts.size
+      }
+    });
     if (this.tickTimer) {
       clearTimeout(this.tickTimer);
       this.tickTimer = null;
@@ -154,7 +179,17 @@ export class Orchestrator {
     this.tracker = this.trackerFactory(config);
     this.workspaceManager.updateConfig(config);
     this.agentRunner.updateConfig(config);
+    this.audit.updateConfig(config.audit);
     this.lastConfigError = null;
+    void this.recordAudit({
+      level: "info",
+      category: "config",
+      action: "workflow_reloaded",
+      message: "Workflow reloaded",
+      data: {
+        workflowPath: workflow.filePath
+      }
+    });
     this.notifyRuntimeSnapshotChanged();
 
     if (!this.stopped) {
@@ -168,16 +203,43 @@ export class Orchestrator {
       message: error.message
     };
     this.logger.error({ code: error.code, message: error.message }, "workflow_reload_failed");
+    void this.recordAudit({
+      level: "error",
+      category: "config",
+      action: "workflow_reload_failed",
+      message: error.message,
+      data: {
+        code: error.code
+      }
+    });
     this.notifyRuntimeSnapshotChanged();
   }
 
   async requestRefresh(): Promise<{ queued: boolean; coalesced: boolean }> {
     if (this.tickInProgress) {
       this.refreshRequested = true;
+      void this.recordAudit({
+        level: "info",
+        category: "http",
+        action: "refresh_requested",
+        message: "Refresh queued while a tick is in progress",
+        data: {
+          coalesced: true
+        }
+      });
       return { queued: true, coalesced: true };
     }
 
     this.scheduleTick(0);
+    void this.recordAudit({
+      level: "info",
+      category: "http",
+      action: "refresh_requested",
+      message: "Refresh requested",
+      data: {
+        coalesced: false
+      }
+    });
     return { queued: true, coalesced: false };
   }
 
@@ -199,7 +261,8 @@ export class Orchestrator {
       generatedAt,
       counts: {
         running: running.length,
-        retrying: retrying.length
+        retrying: retrying.length,
+        blocked: this.blockedUntilChange.size
       },
       running,
       retrying,
@@ -209,6 +272,7 @@ export class Orchestrator {
         totalTokens: this.codexTotals.totalTokens,
         secondsRunning: this.computeRuntimeSeconds()
       },
+      audit: this.audit.getSummary(),
       rateLimits: this.latestRateLimits,
       workflow: {
         path: this.workflow.filePath,
@@ -272,6 +336,14 @@ export class Orchestrator {
     };
   }
 
+  getAuditEvents(query?: AuditEventQuery): AuditEventPage {
+    return this.audit.query(query);
+  }
+
+  subscribeAuditEvents(listener: (event: AuditEvent) => void): () => void {
+    return this.audit.subscribe(listener);
+  }
+
   private scheduleTick(delayMs: number): void {
     if (this.stopped) {
       return;
@@ -330,6 +402,15 @@ export class Orchestrator {
       const configError = ensureSymphonyError(error, "config_validation_failed");
       this.lastConfigError = { code: configError.code, message: configError.message };
       this.logger.error({ code: configError.code, message: configError.message }, "dispatch_validation_failed");
+      void this.recordAudit({
+        level: "error",
+        category: "config",
+        action: "dispatch_validation_failed",
+        message: configError.message,
+        data: {
+          code: configError.code
+        }
+      });
       this.notifyRuntimeSnapshotChanged();
       return;
     }
@@ -339,6 +420,12 @@ export class Orchestrator {
       issues = await this.tracker.fetchCandidateIssues();
     } catch (error) {
       this.logger.error({ err: formatError(error) }, "candidate_fetch_failed");
+      void this.recordAudit({
+        level: "error",
+        category: "tracker",
+        action: "candidate_fetch_failed",
+        message: formatError(error)
+      });
       return;
     }
 
@@ -361,6 +448,22 @@ export class Orchestrator {
         const lastSeenMs = entry.session.lastCodexTimestamp ? Date.parse(entry.session.lastCodexTimestamp) : entry.startedAtMs;
         if (now - lastSeenMs > stallTimeoutMs) {
           this.logger.warn({ issue_id: issueId, issue_identifier: entry.identifier }, "stalled_run_detected");
+          void this.recordAudit({
+            level: "warn",
+            category: "scheduler",
+            action: "stalled_run_detected",
+            issueId,
+            issueIdentifier: entry.identifier,
+            attempt: entry.retryAttempt,
+            sessionId: entry.session.sessionId,
+            threadId: entry.session.threadId,
+            turnId: entry.session.turnId,
+            workspacePath: entry.workspacePath,
+            message: "Run exceeded Codex stall timeout",
+            data: {
+              stallTimeoutMs
+            }
+          });
           this.requestCancellation(entry, "stalled", false, "stall timeout exceeded");
         }
       }
@@ -376,6 +479,15 @@ export class Orchestrator {
       refreshed = await this.tracker.fetchIssueStatesByIds(runningIds);
     } catch (error) {
       this.logger.warn({ err: formatError(error) }, "running_state_refresh_failed");
+      void this.recordAudit({
+        level: "warn",
+        category: "tracker",
+        action: "running_state_refresh_failed",
+        message: formatError(error),
+        data: {
+          issueIds: runningIds
+        }
+      });
       return;
     }
 
@@ -398,6 +510,17 @@ export class Orchestrator {
   private async startupTerminalWorkspaceCleanup(): Promise<void> {
     const terminalIssues = await this.tracker.fetchIssuesByStates(this.config.tracker.terminalStates);
     await Promise.allSettled(terminalIssues.map((issue) => this.workspaceManager.removeWorkspaceForIssue(issue.identifier)));
+    if (terminalIssues.length > 0) {
+      void this.recordAudit({
+        level: "info",
+        category: "workspace",
+        action: "startup_terminal_workspace_cleanup",
+        message: "Cleaned up terminal issue workspaces",
+        data: {
+          count: terminalIssues.length
+        }
+      });
+    }
   }
 
   private dispatchIssue(issue: Issue, attempt: number | null): void {
@@ -429,6 +552,20 @@ export class Orchestrator {
     }
 
     this.logger.info({ issue_id: issue.id, issue_identifier: issue.identifier, attempt }, "dispatch_started");
+    void this.recordAudit({
+      level: "info",
+      category: "scheduler",
+      action: "dispatch_started",
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      attempt,
+      message: issue.title,
+      data: {
+        state: issue.state,
+        priority: issue.priority,
+        url: issue.url
+      }
+    });
     this.notifyRuntimeSnapshotChanged();
 
     const promise = this.agentRunner
@@ -468,6 +605,7 @@ export class Orchestrator {
     entry.session.lastCodexEvent = event.event;
     entry.session.lastCodexTimestamp = event.timestamp;
     entry.session.lastCodexMessage = event.message ?? null;
+    entry.workspacePath = extractWorkspacePath(event.raw) ?? entry.workspacePath;
 
     if (event.event === "session_started") {
       entry.session.turnCount += 1;
@@ -482,6 +620,23 @@ export class Orchestrator {
         "turn_started"
       );
     }
+
+    const sessionAuditData = auditDataForSessionEvent(event, this.config.audit.includeRawCodexEvents);
+    void this.recordAudit({
+      at: event.timestamp,
+      level: auditLevelForSessionEvent(event.event),
+      category: auditCategoryForSessionEvent(event.event),
+      action: event.event,
+      issueId,
+      issueIdentifier: entry.identifier,
+      attempt: entry.retryAttempt,
+      sessionId: event.sessionId ?? entry.session.sessionId,
+      threadId: event.threadId ?? entry.session.threadId,
+      turnId: event.turnId ?? entry.session.turnId,
+      workspacePath: entry.workspacePath,
+      message: event.message ?? null,
+      ...(sessionAuditData ? { data: sessionAuditData } : {})
+    });
 
     if (
       event.event === "environment_preflight" ||
@@ -581,12 +736,53 @@ export class Orchestrator {
       },
       "dispatch_finished"
     );
+    const dispatchFinishLevel = auditLevelForDispatchFinish(result.status, entry.cancellation);
+    const dispatchFinishMessage =
+      entry.cancellation && entry.cancellation.kind !== "stalled"
+        ? entry.cancellation.reason
+        : result.error ?? `Attempt ${result.status}`;
+    void this.recordAudit({
+      level: dispatchFinishLevel,
+      category: "scheduler",
+      action: "dispatch_finished",
+      issueId,
+      issueIdentifier: result.issue.identifier,
+      attempt: result.attempt,
+      sessionId: entry.session.sessionId,
+      threadId: entry.session.threadId,
+      turnId: entry.session.turnId,
+      workspacePath: result.workspacePath || entry.workspacePath,
+      message: dispatchFinishMessage,
+      data: {
+        status: result.status,
+        ...(entry.cancellation
+          ? {
+              cancellationKind: entry.cancellation.kind,
+              cancellationReason: entry.cancellation.reason
+            }
+          : {}),
+        turnCount: result.turnCount,
+        lastEvent: entry.session.lastCodexEvent,
+        lastMessage: entry.session.lastCodexMessage,
+        secondsRunning: Math.max(0, (Date.now() - entry.startedAtMs) / 1000)
+      }
+    });
 
     if (entry.cancellation) {
       this.blockedUntilChange.delete(issueId);
       if (entry.cancellation.cleanupWorkspace && result.issue.identifier) {
         await this.workspaceManager.removeWorkspaceForIssue(result.issue.identifier).catch((error) => {
           this.logger.warn({ err: formatError(error), issue_id: issueId }, "workspace_cleanup_failed");
+          void this.recordAudit({
+            level: "error",
+            category: "workspace",
+            action: "workspace_cleanup_failed",
+            issueId,
+            issueIdentifier: result.issue.identifier,
+            attempt: result.attempt,
+            workspacePath: result.workspacePath || null,
+            message: formatError(error)
+          });
         });
       }
 
@@ -639,6 +835,23 @@ export class Orchestrator {
       cleanupWorkspace,
       reason
     };
+    void this.recordAudit({
+      level: kind === "stalled" ? "warn" : "info",
+      category: "scheduler",
+      action: "cancellation_requested",
+      issueId: entry.issue.id,
+      issueIdentifier: entry.identifier,
+      attempt: entry.retryAttempt,
+      sessionId: entry.session.sessionId,
+      threadId: entry.session.threadId,
+      turnId: entry.session.turnId,
+      workspacePath: entry.workspacePath,
+      message: reason,
+      data: {
+        kind,
+        cleanupWorkspace
+      }
+    });
     entry.abortController.abort();
   }
 
@@ -677,6 +890,20 @@ export class Orchestrator {
       },
       continuation ? "continuation_scheduled" : "retry_scheduled"
     );
+    void this.recordAudit({
+      level: continuation ? "info" : "warn",
+      category: "scheduler",
+      action: continuation ? "continuation_scheduled" : "retry_scheduled",
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      attempt,
+      message: error,
+      data: {
+        delayMs,
+        dueAt: new Date(dueAtMs).toISOString(),
+        continuation
+      }
+    });
 
     const tracking = this.ensureIssueTracking(issue);
     tracking.restartCount += 1;
@@ -691,6 +918,15 @@ export class Orchestrator {
       return;
     }
     this.retryAttempts.delete(issueId);
+    void this.recordAudit({
+      level: "info",
+      category: "scheduler",
+      action: "retry_fired",
+      issueId,
+      issueIdentifier: retryState.entry.identifier,
+      attempt: retryState.entry.attempt,
+      message: retryState.entry.error
+    });
 
     let candidates: Issue[];
     try {
@@ -720,17 +956,43 @@ export class Orchestrator {
         this.claimed.delete(issueId);
         this.notifyRuntimeSnapshotChanged();
       }
+      void this.recordAudit({
+        level: "error",
+        category: "tracker",
+        action: "retry_poll_failed",
+        issueId,
+        issueIdentifier: retryState.entry.identifier,
+        attempt: retryState.entry.attempt,
+        message: formatError(error)
+      });
       return;
     }
 
     const issue = candidates.find((candidate) => candidate.id === issueId);
     if (!issue) {
       this.claimed.delete(issueId);
+      void this.recordAudit({
+        level: "warn",
+        category: "scheduler",
+        action: "retry_candidate_missing",
+        issueId,
+        issueIdentifier: retryState.entry.identifier,
+        attempt: retryState.entry.attempt
+      });
       this.notifyRuntimeSnapshotChanged();
       return;
     }
 
     if (!this.hasAvailableGlobalSlots() || !this.hasAvailableStateSlots(issue.state)) {
+      void this.recordAudit({
+        level: "warn",
+        category: "scheduler",
+        action: "retry_capacity_wait",
+        issueId,
+        issueIdentifier: issue.identifier,
+        attempt: retryState.entry.attempt + 1,
+        message: "No available orchestrator slots"
+      });
       this.scheduleRetry(issue, retryState.entry.attempt + 1, "no available orchestrator slots");
       return;
     }
@@ -742,6 +1004,17 @@ export class Orchestrator {
     }
 
     this.claimed.delete(issueId);
+    void this.recordAudit({
+      level: "info",
+      category: "scheduler",
+      action: "retry_not_dispatchable",
+      issueId,
+      issueIdentifier: issue.identifier,
+      attempt: retryState.entry.attempt,
+      data: {
+        state: issue.state
+      }
+    });
     this.notifyRuntimeSnapshotChanged();
   }
 
@@ -795,12 +1068,16 @@ export class Orchestrator {
       issueId: entry.issue.id,
       issueIdentifier: entry.identifier,
       state: entry.issue.state,
+      attempt: entry.retryAttempt,
       sessionId: entry.session.sessionId,
+      threadId: entry.session.threadId,
+      turnId: entry.session.turnId,
       turnCount: entry.session.turnCount,
       lastEvent: entry.session.lastCodexEvent,
       lastMessage: entry.session.lastCodexMessage,
       startedAt: entry.startedAt,
       lastEventAt: entry.session.lastCodexTimestamp,
+      workspacePath: entry.workspacePath,
       tokens: {
         inputTokens: entry.session.codexInputTokens,
         outputTokens: entry.session.codexOutputTokens,
@@ -852,6 +1129,18 @@ export class Orchestrator {
       },
       "dispatch_blocked_pending_external_change"
     );
+    void this.recordAudit({
+      level: "warn",
+      category: "scheduler",
+      action: "dispatch_blocked_pending_external_change",
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      message: error,
+      data: {
+        state: issue.state,
+        updatedAt: issue.updatedAt
+      }
+    });
   }
 
   private isBlockedPendingExternalChange(issue: Issue): boolean {
@@ -862,6 +1151,20 @@ export class Orchestrator {
 
     if (blocked.state !== issue.state || blocked.updatedAt !== issue.updatedAt) {
       this.blockedUntilChange.delete(issue.id);
+      void this.recordAudit({
+        level: "info",
+        category: "scheduler",
+        action: "blocked_issue_changed",
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        message: "Blocked issue changed and is eligible for dispatch checks",
+        data: {
+          previousState: blocked.state,
+          nextState: issue.state,
+          previousUpdatedAt: blocked.updatedAt,
+          nextUpdatedAt: issue.updatedAt
+        }
+      });
       this.notifyRuntimeSnapshotChanged();
       return false;
     }
@@ -892,6 +1195,14 @@ export class Orchestrator {
       }
     }, Orchestrator.SNAPSHOT_BROADCAST_DEBOUNCE_MS);
     this.snapshotBroadcastTimer.unref?.();
+  }
+
+  private async recordAudit(input: Parameters<AuditRecorder["record"]>[0]): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch (error) {
+      this.logger.warn({ err: formatError(error) }, "audit_record_failed");
+    }
   }
 
 }
@@ -948,4 +1259,84 @@ function isTerminalSessionEvent(eventName: string): boolean {
     eventName === "turn_cancelled" ||
     eventName === "turn_input_required"
   );
+}
+
+function auditCategoryForSessionEvent(eventName: string): "codex" | "tool" | "workspace" {
+  if (eventName === "workspace_ready" || eventName === "environment_preflight") {
+    return "workspace";
+  }
+
+  if (
+    eventName === "dynamic_tools_advertised" ||
+    eventName === "dynamic_tools_unavailable" ||
+    eventName === "dynamic_tool_call_completed" ||
+    eventName === "unsupported_tool_call"
+  ) {
+    return "tool";
+  }
+
+  return "codex";
+}
+
+function auditLevelForSessionEvent(eventName: string): "info" | "warn" | "error" {
+  if (eventName === "turn_failed") {
+    return "error";
+  }
+
+  if (
+    eventName === "turn_input_required" ||
+    eventName === "turn_cancelled" ||
+    eventName === "dynamic_tools_unavailable" ||
+    eventName === "unsupported_tool_call"
+  ) {
+    return "warn";
+  }
+
+  return "info";
+}
+
+function auditLevelForDispatchFinish(
+  status: RunAttemptResult["status"],
+  cancellation: RunningEntry["cancellation"]
+): "info" | "warn" | "error" {
+  if (cancellation && cancellation.kind !== "stalled") {
+    return "info";
+  }
+
+  if (status === "failed" || status === "timed_out" || status === "stalled") {
+    return "error";
+  }
+
+  if (status === "blocked" || status === "canceled_by_reconciliation") {
+    return "warn";
+  }
+
+  return "info";
+}
+
+function auditDataForSessionEvent(
+  event: LiveSessionEvent,
+  includeRawCodexEvents: boolean
+): Record<string, unknown> | undefined {
+  const data: Record<string, unknown> = {};
+  if (event.usage) {
+    data.usage = event.usage;
+  }
+  if (event.rateLimits) {
+    data.rateLimits = event.rateLimits;
+  }
+  if (includeRawCodexEvents && event.raw !== undefined) {
+    data.raw = event.raw;
+  }
+
+  return Object.keys(data).length > 0 ? data : undefined;
+}
+
+function extractWorkspacePath(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const workspacePath = (raw as { workspacePath?: unknown }).workspacePath;
+  return typeof workspacePath === "string" && workspacePath.trim() !== "" ? workspacePath : null;
 }

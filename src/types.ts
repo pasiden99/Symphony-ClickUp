@@ -70,6 +70,15 @@ export interface ScreenshotConfig {
   maxFileBytes: number;
 }
 
+export interface AuditConfig {
+  enabled: boolean;
+  outputDir: string;
+  maxRecentEvents: number;
+  maxEventBytes: number;
+  retentionDays: number;
+  includeRawCodexEvents: boolean;
+}
+
 export interface ClickUpTrackerConfig {
   kind: "clickup";
   endpoint: string;
@@ -97,6 +106,7 @@ export interface EffectiveConfig {
   agent: AgentConfig;
   codex: CodexConfig;
   screenshots: ScreenshotConfig;
+  audit: AuditConfig;
   server: ServerConfig;
 }
 
@@ -176,12 +186,16 @@ export interface RunningSnapshotRow {
   issueId: string;
   issueIdentifier: string;
   state: string;
+  attempt: number | null;
   sessionId: string | null;
+  threadId: string | null;
+  turnId: string | null;
   turnCount: number;
   lastEvent: string | null;
   lastMessage: string | null;
   startedAt: string;
   lastEventAt: string | null;
+  workspacePath: string | null;
   tokens: {
     inputTokens: number;
     outputTokens: number;
@@ -197,15 +211,86 @@ export interface RetrySnapshotRow {
   error: string | null;
 }
 
+export type AuditLevel = "debug" | "info" | "warn" | "error";
+
+export type AuditCategory =
+  | "scheduler"
+  | "agent"
+  | "codex"
+  | "tool"
+  | "workspace"
+  | "tracker"
+  | "config"
+  | "http";
+
+export interface AuditEvent {
+  id: string;
+  at: string;
+  level: AuditLevel;
+  category: AuditCategory;
+  action: string;
+  issueId?: string;
+  issueIdentifier?: string;
+  attempt?: number | null;
+  sessionId?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  workspacePath?: string | null;
+  message?: string | null;
+  data?: Record<string, unknown>;
+}
+
+export interface AuditEventInput {
+  at?: string;
+  level: AuditLevel;
+  category: AuditCategory;
+  action: string;
+  issueId?: string;
+  issueIdentifier?: string;
+  attempt?: number | null;
+  sessionId?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  workspacePath?: string | null;
+  message?: string | null;
+  data?: Record<string, unknown>;
+}
+
+export interface AuditEventQuery {
+  limit?: number;
+  issueIdentifier?: string;
+  category?: AuditCategory;
+  level?: AuditLevel;
+  q?: string;
+}
+
+export interface AuditEventPage {
+  generatedAt: string;
+  events: AuditEvent[];
+  total: number;
+  limit: number;
+}
+
+export interface AuditSummary {
+  enabled: boolean;
+  recentCount: number;
+  errorCount: number;
+  warnCount: number;
+  failedRecentCount: number;
+  lastEventAt: string | null;
+}
+
 export interface RuntimeSnapshot {
   generatedAt: string;
   counts: {
     running: number;
     retrying: number;
+    blocked: number;
   };
   running: RunningSnapshotRow[];
   retrying: RetrySnapshotRow[];
   codexTotals: RuntimeTotals;
+  audit: AuditSummary;
   rateLimits: Record<string, unknown> | null;
   workflow: {
     path: string;

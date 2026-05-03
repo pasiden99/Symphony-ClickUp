@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import type { AuditRecorder } from "../src/audit.js";
 import { SymphonyError } from "../src/errors.js";
 import { Orchestrator } from "../src/orchestrator.js";
-import type { EffectiveConfig, Issue, RunAttemptResult, TrackerClient, WorkflowDefinition } from "../src/types.js";
+import type { AuditEventInput, EffectiveConfig, Issue, RunAttemptResult, TrackerClient, WorkflowDefinition } from "../src/types.js";
 import { createLogger } from "../src/logging.js";
 
 describe("Orchestrator", () => {
@@ -267,6 +268,90 @@ describe("Orchestrator", () => {
     expect(agentRunner.runAttempt).toHaveBeenCalledTimes(2);
   });
 
+  test("records inactive reconciliation cancellation as a non-failed dispatch finish", async () => {
+    let candidate: Issue = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "Move to review",
+      description: null,
+      priority: 1,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: new Date("2025-01-01T00:00:00Z").toISOString(),
+      updatedAt: new Date("2025-01-01T00:00:00Z").toISOString()
+    };
+
+    const tracker: TrackerClient = {
+      fetchCandidateIssues: vi.fn(async () => [candidate]),
+      fetchIssuesByStates: vi.fn(async () => []),
+      fetchIssueStatesByIds: vi.fn(async () => [candidate])
+    };
+    const audit = createFakeAuditRecorder();
+    const agentRunner = {
+      updateConfig: vi.fn(),
+      runAttempt: vi.fn(
+        (options: { signal?: AbortSignal }) =>
+          new Promise<RunAttemptResult>((resolve) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => {
+                resolve({
+                  status: "failed",
+                  issue: candidate,
+                  attempt: null,
+                  workspacePath: "/tmp/ws/ENG-1",
+                  error: "Codex aborted",
+                  turnCount: 1
+                });
+              },
+              { once: true }
+            );
+          })
+      )
+    };
+
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => tracker,
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      agentRunner as never,
+      createLogger({ enabled: false }),
+      audit
+    );
+
+    await orchestrator.start();
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    candidate = {
+      ...candidate,
+      state: "Human Review",
+      updatedAt: new Date("2025-01-01T00:01:00Z").toISOString()
+    };
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+
+    const dispatchFinished = [...audit.events].reverse().find((event) => event.action === "dispatch_finished");
+    expect(dispatchFinished).toMatchObject({
+      level: "info",
+      message: "inactive state Human Review",
+      data: {
+        status: "failed",
+        cancellationKind: "inactive"
+      }
+    });
+
+    await orchestrator.stop();
+  });
+
   test("coalesces runtime snapshot notifications for bursty state changes", async () => {
     const orchestrator = new Orchestrator(
       baseConfig(),
@@ -308,6 +393,140 @@ describe("Orchestrator", () => {
     await vi.advanceTimersByTimeAsync(100);
 
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  test("emits audit events for dispatch, session activity, completion, and retry scheduling", async () => {
+    const candidate: Issue = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "Audited work",
+      description: null,
+      priority: 1,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: new Date("2025-01-01T00:00:00Z").toISOString(),
+      updatedAt: null
+    };
+    const tracker: TrackerClient = {
+      fetchCandidateIssues: vi.fn(async () => [candidate]),
+      fetchIssuesByStates: vi.fn(async () => []),
+      fetchIssueStatesByIds: vi.fn(async () => [candidate])
+    };
+    const audit = createFakeAuditRecorder();
+    const agentRunner = {
+      updateConfig: vi.fn(),
+      runAttempt: vi.fn(async (options: { onEvent: (event: { event: string; timestamp: string; sessionId?: string; raw?: unknown }) => void }) => {
+        options.onEvent({
+          event: "session_started",
+          timestamp: new Date("2025-01-01T00:00:01Z").toISOString(),
+          sessionId: "session-1",
+          raw: {
+            workspacePath: "/tmp/ws/ENG-1"
+          }
+        });
+        return {
+          status: "failed",
+          issue: candidate,
+          attempt: null,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: "boom",
+          turnCount: 1
+        } satisfies RunAttemptResult;
+      })
+    };
+
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => tracker,
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      agentRunner as never,
+      createLogger({ enabled: false }),
+      audit
+    );
+
+    await orchestrator.start();
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+
+    expect(audit.events.map((event) => event.action)).toEqual(
+      expect.arrayContaining(["service_started", "dispatch_started", "session_started", "dispatch_finished", "retry_scheduled"])
+    );
+    expect(audit.events.find((event) => event.action === "session_started")).toMatchObject({
+      category: "codex",
+      issueIdentifier: "ENG-1",
+      workspacePath: "/tmp/ws/ENG-1"
+    });
+  });
+
+  test("emits audit events for blocked work and invalid workflow config", async () => {
+    const audit = createFakeAuditRecorder();
+    const candidate: Issue = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "Blocked work",
+      description: null,
+      priority: 1,
+      state: "In Progress",
+      branchName: null,
+      url: null,
+      labels: [],
+      blockedBy: [],
+      createdAt: new Date("2025-01-01T00:00:00Z").toISOString(),
+      updatedAt: new Date("2025-01-01T00:00:00Z").toISOString()
+    };
+    const orchestrator = new Orchestrator(
+      baseConfig(),
+      baseWorkflow(),
+      () => ({
+        fetchCandidateIssues: vi.fn(async () => [candidate]),
+        fetchIssuesByStates: vi.fn(async () => []),
+        fetchIssueStatesByIds: vi.fn(async () => [candidate])
+      }),
+      {
+        updateConfig: vi.fn(),
+        removeWorkspaceForIssue: vi.fn(async () => undefined)
+      } as never,
+      {
+        updateConfig: vi.fn(),
+        runAttempt: vi.fn(async () => ({
+          status: "blocked",
+          issue: candidate,
+          attempt: null,
+          workspacePath: "/tmp/ws/ENG-1",
+          error: "Interactive input required",
+          turnCount: 1
+        } satisfies RunAttemptResult))
+      } as never,
+      createLogger({ enabled: false }),
+      audit
+    );
+
+    await orchestrator.start();
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+    orchestrator.applyInvalidWorkflow(new SymphonyError("workflow_reload_failed", "bad workflow"));
+
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({
+        action: "dispatch_blocked_pending_external_change",
+        level: "warn",
+        issueIdentifier: "ENG-1"
+      })
+    );
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({
+        action: "workflow_reload_failed",
+        level: "error",
+        category: "config"
+      })
+    );
   });
 });
 
@@ -370,8 +589,55 @@ function baseConfig(): EffectiveConfig {
       maxFilesPerAttempt: 8,
       maxFileBytes: 10 * 1024 * 1024
     },
+    audit: {
+      enabled: true,
+      outputDir: "/tmp/workspaces/.symphony-artifacts/audit",
+      maxRecentEvents: 500,
+      maxEventBytes: 16_384,
+      retentionDays: 14,
+      includeRawCodexEvents: false
+    },
     server: {
       port: null
+    }
+  };
+}
+
+function createFakeAuditRecorder(): AuditRecorder & { events: AuditEventInput[] } {
+  const events: AuditEventInput[] = [];
+  return {
+    events,
+    async initialize() {
+      return undefined;
+    },
+    updateConfig: vi.fn(),
+    async record(event: AuditEventInput) {
+      events.push(event);
+      return null;
+    },
+    query() {
+      return {
+        generatedAt: new Date().toISOString(),
+        events: [],
+        total: 0,
+        limit: 200
+      };
+    },
+    getSummary() {
+      return {
+        enabled: true,
+        recentCount: events.length,
+        errorCount: events.filter((event) => event.level === "error").length,
+        warnCount: events.filter((event) => event.level === "warn").length,
+        failedRecentCount: 0,
+        lastEventAt: null
+      };
+    },
+    subscribe() {
+      return () => undefined;
+    },
+    async flush() {
+      return undefined;
     }
   };
 }

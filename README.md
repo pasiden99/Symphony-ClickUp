@@ -127,6 +127,7 @@ Then edit these values in `WORKFLOW.md`:
 - `codex.command` if your Codex launch command differs from the example
 - `codex.model`
 - `codex.reasoning_effort`
+- `audit.output_dir` and retention settings if you want audit logs somewhere other than the workspace artifacts folder
 - `server.port` if you want the dashboard enabled
 
 If you use the example workflow, replace the placeholder ClickUp IDs before starting.
@@ -247,6 +248,7 @@ These runtime rules are built into the app:
 - On startup, Symphony also removes workspaces for tasks already in terminal statuses.
 - Changes to `WORKFLOW.md` are reloaded automatically while Symphony is running.
 - If you change the HTTP port, restart Symphony. The server does not re-bind to a new port automatically.
+- Agent lifecycle, Codex, tool, workspace, and scheduler activity is written to persistent audit JSONL files when `audit.enabled` is true.
 
 ## User Guide
 

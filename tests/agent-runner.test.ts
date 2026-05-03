@@ -130,6 +130,14 @@ function baseConfig(root: string, workspaceId: string): EffectiveConfig {
       maxFilesPerAttempt: 8,
       maxFileBytes: 10 * 1024 * 1024
     },
+    audit: {
+      enabled: true,
+      outputDir: path.join(root, ".symphony-artifacts/audit"),
+      maxRecentEvents: 500,
+      maxEventBytes: 16_384,
+      retentionDays: 14,
+      includeRawCodexEvents: false
+    },
     server: {
       port: null
     }

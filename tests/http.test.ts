@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { createHttpServer } from "../src/http.js";
 import { createLogger } from "../src/logging.js";
-import type { RuntimeSnapshot } from "../src/types.js";
+import type { AuditEvent, AuditEventPage, AuditEventQuery, RuntimeSnapshot } from "../src/types.js";
 
 describe("http server", () => {
   const apps: Array<ReturnType<typeof createHttpServer>> = [];
@@ -27,6 +27,8 @@ describe("http server", () => {
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.body).toContain("<!doctype html>");
     expect(response.body).toContain("Symphony Runtime");
+    expect(response.body).toContain("Audit Timeline");
+    expect(response.body).toContain('id="audit-detail-back"');
     expect(response.body).toContain("EventSource('/api/v1/events')");
   });
 
@@ -119,11 +121,72 @@ describe("http server", () => {
       stream?.destroy();
     }
   });
+
+  test("returns filtered audit events", async () => {
+    const app = createHttpServer(createFakeOrchestrator(), createLogger({ enabled: false }));
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit?level=error&q=workspace"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as AuditEventPage;
+    expect(payload.events).toHaveLength(1);
+    expect(payload.events[0]?.action).toBe("workspace_cleanup_failed");
+  });
+
+  test("returns per-issue audit events", async () => {
+    const app = createHttpServer(createFakeOrchestrator(), createLogger({ enabled: false }));
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/ENG-9/audit"
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as AuditEventPage;
+    expect(payload.events.every((event) => event.issueIdentifier === "ENG-9")).toBe(true);
+  });
+
+  test("streams audit events over sse", async () => {
+    const orchestrator = createFakeOrchestrator();
+    const app = createHttpServer(orchestrator, createLogger({ enabled: false }));
+    apps.push(app);
+    let stream: Readable | null = null;
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/events",
+        payloadAsStream: true
+      });
+
+      const activeStream = response.stream();
+      stream = activeStream;
+      const collector = createStreamCollector(activeStream);
+
+      orchestrator.emitAuditEvent({
+        ...baseAuditEvents()[0]!,
+        id: "audit-new",
+        action: "retry_scheduled"
+      });
+
+      const updateChunk = await collector.waitFor('"action":"retry_scheduled"');
+      expect(updateChunk).toContain("event: audit");
+    } finally {
+      stream?.destroy();
+    }
+  });
 });
 
 function createFakeOrchestrator(initialSnapshot: RuntimeSnapshot = baseSnapshot()) {
   let snapshot = initialSnapshot;
+  let auditEvents = baseAuditEvents();
   const listeners = new Set<(snapshot: RuntimeSnapshot) => void>();
+  const auditListeners = new Set<(event: AuditEvent) => void>();
 
   return {
     getRuntimeSnapshot() {
@@ -131,6 +194,29 @@ function createFakeOrchestrator(initialSnapshot: RuntimeSnapshot = baseSnapshot(
     },
     getIssueSnapshot() {
       return null;
+    },
+    getAuditEvents(query: AuditEventQuery = {}) {
+      let events = [...auditEvents];
+      if (query.issueIdentifier) {
+        events = events.filter((event) => event.issueIdentifier === query.issueIdentifier);
+      }
+      if (query.level) {
+        events = events.filter((event) => event.level === query.level);
+      }
+      if (query.category) {
+        events = events.filter((event) => event.category === query.category);
+      }
+      if (query.q) {
+        const q = query.q.toLowerCase();
+        events = events.filter((event) => `${event.action} ${event.message ?? ""}`.toLowerCase().includes(q));
+      }
+      const limit = query.limit ?? 200;
+      return {
+        generatedAt: new Date("2026-03-08T00:00:02.000Z").toISOString(),
+        events: events.slice(0, limit),
+        total: events.length,
+        limit
+      };
     },
     async requestRefresh() {
       return {
@@ -144,10 +230,22 @@ function createFakeOrchestrator(initialSnapshot: RuntimeSnapshot = baseSnapshot(
         listeners.delete(listener);
       };
     },
+    subscribeAuditEvents(listener: (event: AuditEvent) => void) {
+      auditListeners.add(listener);
+      return () => {
+        auditListeners.delete(listener);
+      };
+    },
     emitRuntimeSnapshot(nextSnapshot: RuntimeSnapshot) {
       snapshot = nextSnapshot;
       for (const listener of [...listeners]) {
         listener(snapshot);
+      }
+    },
+    emitAuditEvent(event: AuditEvent) {
+      auditEvents = [event, ...auditEvents];
+      for (const listener of [...auditListeners]) {
+        listener(event);
       }
     }
   };
@@ -158,7 +256,8 @@ function baseSnapshot(): RuntimeSnapshot {
     generatedAt: new Date("2026-03-08T00:00:00.000Z").toISOString(),
     counts: {
       running: 0,
-      retrying: 0
+      retrying: 0,
+      blocked: 0
     },
     running: [],
     retrying: [],
@@ -167,6 +266,14 @@ function baseSnapshot(): RuntimeSnapshot {
       outputTokens: 0,
       totalTokens: 0,
       secondsRunning: 0
+    },
+    audit: {
+      enabled: true,
+      recentCount: 2,
+      errorCount: 1,
+      warnCount: 0,
+      failedRecentCount: 1,
+      lastEventAt: new Date("2026-03-08T00:00:01.000Z").toISOString()
     },
     rateLimits: null,
     workflow: {
@@ -183,19 +290,24 @@ function updatedSnapshot(): RuntimeSnapshot {
     generatedAt: new Date("2026-03-08T00:00:01.000Z").toISOString(),
     counts: {
       running: 1,
-      retrying: 0
+      retrying: 0,
+      blocked: 0
     },
     running: [
       {
         issueId: "9",
         issueIdentifier: "ENG-9",
         state: "In Progress",
+        attempt: null,
         sessionId: "thread-1-turn-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
         turnCount: 2,
         lastEvent: "turn_completed",
         lastMessage: "Validation passed",
         startedAt: new Date("2026-03-08T00:00:00.000Z").toISOString(),
         lastEventAt: new Date("2026-03-08T00:00:01.000Z").toISOString(),
+        workspacePath: "/tmp/ws/ENG-9",
         tokens: {
           inputTokens: 12,
           outputTokens: 8,
@@ -204,6 +316,34 @@ function updatedSnapshot(): RuntimeSnapshot {
       }
     ]
   };
+}
+
+function baseAuditEvents(): AuditEvent[] {
+  return [
+    {
+      id: "audit-2",
+      at: new Date("2026-03-08T00:00:01.000Z").toISOString(),
+      level: "error",
+      category: "workspace",
+      action: "workspace_cleanup_failed",
+      issueId: "9",
+      issueIdentifier: "ENG-9",
+      message: "workspace remove failed"
+    },
+    {
+      id: "audit-1",
+      at: new Date("2026-03-08T00:00:00.000Z").toISOString(),
+      level: "info",
+      category: "codex",
+      action: "turn_completed",
+      issueId: "9",
+      issueIdentifier: "ENG-9",
+      sessionId: "session-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      message: "Validation passed"
+    }
+  ];
 }
 
 function createStreamCollector(stream: Readable): {

@@ -39,6 +39,7 @@ Current front matter sections used by the implementation:
 | `agent` | Concurrency, retry backoff, and max-turn controls |
 | `codex` | Codex launch command, optional model/personality overrides, and sandbox/timeout settings |
 | `screenshots` | Optional Playwright screenshot capture and ClickUp attachment limits |
+| `audit` | Persistent agent activity audit logging and retention settings |
 | `server` | Optional local HTTP server port |
 
 Environment precedence:
@@ -66,6 +67,17 @@ Notable `screenshots` keys:
 - `screenshots.max_file_bytes`
 
 When enabled, Symphony advertises a Codex tool for local review screenshots. Relative screenshot output paths resolve under `workspace.root`, outside the cloned task repository.
+
+Notable `audit` keys:
+
+- `audit.enabled`
+- `audit.output_dir`
+- `audit.max_recent_events`
+- `audit.max_event_bytes`
+- `audit.retention_days`
+- `audit.include_raw_codex_events`
+
+Audit logging is enabled by default. Symphony writes append-only daily JSONL files under `audit.output_dir`, keeps a recent in-memory window for the dashboard/API, and treats audit persistence as best-effort so agent work continues if audit writes fail. Relative audit output paths resolve under `workspace.root`, outside the cloned task repository.
 
 Template variables available to the prompt body:
 

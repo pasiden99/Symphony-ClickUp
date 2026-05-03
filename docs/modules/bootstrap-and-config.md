@@ -52,6 +52,7 @@ Notable config behavior from `src/config.ts`:
 - `workspace.root` defaults to a temp-dir-backed `symphony_workspaces` path.
 - `codex.command` defaults to `codex app-server`.
 - `codex.model`, `codex.reasoning_effort`, `codex.personality`, and `codex.service_name` are optional pass-through overrides for app-server startup and turn creation.
+- `audit.enabled` defaults to `true`, with daily JSONL output under `workspace.root/.symphony-artifacts/audit`.
 - `server.port` is optional and can be overridden at the CLI.
 
 ## Important Exports and Classes

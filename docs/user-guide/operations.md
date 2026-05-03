@@ -27,11 +27,13 @@ Available routes:
 | --- | --- | --- |
 | `/` | `GET` | Human-friendly HTML dashboard |
 | `/api/v1/state` | `GET` | Full runtime snapshot as JSON |
-| `/api/v1/events` | `GET` | Server-sent event stream of runtime snapshots for live dashboard updates |
+| `/api/v1/audit` | `GET` | Recent persisted audit events, with optional `limit`, `issue_identifier`, `category`, `level`, and `q` filters |
+| `/api/v1/events` | `GET` | Server-sent event stream of runtime snapshots and audit events for live dashboard updates |
+| `/api/v1/:issue_identifier/audit` | `GET` | Recent persisted audit events for one Symphony issue identifier |
 | `/api/v1/:issue_identifier` | `GET` | Status for one Symphony issue identifier such as `CU-123` |
 | `/api/v1/refresh` | `POST` | Queue an immediate poll/reconcile cycle |
 
-The dashboard uses `EventSource` against `/api/v1/events`, so counts and tables update live without a manual refresh.
+The dashboard uses `EventSource` against `/api/v1/events`, so counts, tables, and the audit timeline update live without a manual refresh.
 
 Examples:
 
@@ -41,6 +43,14 @@ curl http://127.0.0.1:3000/api/v1/state
 
 ```bash
 curl -N http://127.0.0.1:3000/api/v1/events
+```
+
+```bash
+curl 'http://127.0.0.1:3000/api/v1/audit?level=error&limit=50'
+```
+
+```bash
+curl http://127.0.0.1:3000/api/v1/CU-123/audit
 ```
 
 ```bash

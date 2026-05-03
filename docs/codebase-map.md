@@ -55,6 +55,7 @@ Annotated authored tree:
 ├── package.json                          # Package metadata, runtime dependencies, scripts, and CLI bin mapping.
 ├── src/
 │   ├── agent-runner.ts                   # One issue attempt: workspace prep, Codex session, turn loop, tracker refresh, and blocked-turn detection.
+│   ├── audit.ts                          # Persistent JSONL audit store, recent event window, filtering, and SSE subscriptions.
 │   ├── cli.ts                            # Command-line entrypoint and `--port` parsing.
 │   ├── config.ts                         # Workflow config resolution, defaults, and dispatch validation.
 │   ├── env.ts                            # `.env` and `.env.local` parsing and load precedence.

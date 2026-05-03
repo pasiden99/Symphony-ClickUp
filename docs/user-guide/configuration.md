@@ -144,6 +144,33 @@ screenshots:
 
 The screenshot tool only accepts local review URLs: `localhost`, `127.0.0.1`, `[::1]`, or `file://` paths inside the active workspace.
 
+## `audit`
+
+Audit logging is enabled by default. Symphony keeps a recent in-memory window for the dashboard and writes append-only JSONL files under the workspace root so recent agent activity survives restarts.
+
+| Key | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `audit.enabled` | No | `true` | Enables persistent audit capture |
+| `audit.output_dir` | No | `.symphony-artifacts/audit` | Relative paths resolve under `workspace.root` |
+| `audit.max_recent_events` | No | `500` | Recent event window loaded into memory and shown in the dashboard/API |
+| `audit.max_event_bytes` | No | `16384` | Oversized event payloads are truncated before persistence |
+| `audit.retention_days` | No | `14` | Old daily JSONL files are removed on startup |
+| `audit.include_raw_codex_events` | No | `false` | Persists raw Codex payloads when enabled; leave off unless debugging protocol details |
+
+Example:
+
+```yaml
+audit:
+  enabled: true
+  output_dir: .symphony-artifacts/audit
+  max_recent_events: 500
+  max_event_bytes: 16384
+  retention_days: 14
+  include_raw_codex_events: false
+```
+
+Audit persistence is best-effort. If writing an audit file fails, Symphony logs a warning and keeps running agent work.
+
 ## `server`
 
 | Key | Required | Default | Notes |

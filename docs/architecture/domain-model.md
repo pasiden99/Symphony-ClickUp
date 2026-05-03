@@ -25,7 +25,8 @@ Primary model flow:
 4. `resolveEffectiveConfig()` converts untyped workflow front matter into `EffectiveConfig`.
 5. `AgentRunner` and `Orchestrator` consume `Issue`, `WorkflowDefinition`, and `EffectiveConfig` to run work.
 6. `CodexSession` emits `LiveSessionEvent` updates.
-7. The orchestrator folds those updates into `LiveSessionSnapshot`, `RetryEntry`, `RuntimeTotals`, and finally `RuntimeSnapshot` and `IssueRuntimeSnapshot` for the dashboard/API.
+7. The orchestrator folds those updates into `LiveSessionSnapshot`, `RetryEntry`, `RuntimeTotals`, and `AuditEvent`s.
+8. `RuntimeSnapshot`, `IssueRuntimeSnapshot`, and filtered `AuditEventPage`s feed the dashboard/API.
 
 Important public models from `src/types.ts`:
 
@@ -41,6 +42,8 @@ Important public models from `src/types.ts`:
 | `LiveSessionEvent` | Raw session event data flowing from Codex to the orchestrator |
 | `LiveSessionSnapshot` | Orchestrator-owned current session summary for one running issue |
 | `RetryEntry` | Scheduled retry metadata |
+| `AuditEvent` | Append-only operator event for scheduler, Codex, tool, workspace, tracker, config, and HTTP activity |
+| `AuditEventPage` | Filtered page of recent persisted audit events |
 | `RuntimeSnapshot` | Whole-service HTTP/dashboard view |
 | `IssueRuntimeSnapshot` | Per-issue HTTP/dashboard view |
 | `TrackerClient` | Minimal tracker interface consumed by the orchestrator |
@@ -60,7 +63,7 @@ Private orchestrator-only models in `src/orchestrator.ts`:
 | `src/types.ts` | `WorkflowDefinition` | Parsed repo-owned workflow contract |
 | `src/types.ts` | `EffectiveConfig` | Typed runtime config used everywhere after startup |
 | `src/types.ts` | `RunAttemptResult` | Contract between `AgentRunner` and `Orchestrator` |
-| `src/types.ts` | `RuntimeSnapshot`, `IssueRuntimeSnapshot` | Public HTTP/dashboard state shapes |
+| `src/types.ts` | `RuntimeSnapshot`, `IssueRuntimeSnapshot`, `AuditEvent`, `AuditEventPage` | Public HTTP/dashboard state shapes |
 | `src/types.ts` | `TrackerClient` | Integration boundary for tracker adapters |
 
 ## Inputs and Outputs
