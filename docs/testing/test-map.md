@@ -28,16 +28,16 @@ Suite map:
 
 | Test file | Covered behavior |
 | --- | --- |
-| `tests/clickup-dynamic-tools.test.ts` | Task reads, updates, comments, API path construction, and current-issue identifier remapping for dynamic tools |
+| `tests/clickup-dynamic-tools.test.ts` | Compact task/comment projections, raw-payload escape hatches, update acknowledgements, API path construction, and current-issue identifier remapping for dynamic tools |
 | `tests/clickup-tracker.test.ts` | Paginated candidate fetches, blocker resolution, identifier normalization, and invalid workspace messaging |
-| `tests/codex-client.test.ts` | Session start, turn completion, interactive-input failed-turn results, dynamic tool calls, and sandbox policy normalization |
+| `tests/codex-client.test.ts` | Session start, cached dynamic-tool registration fallback, turn completion, interactive-input failed-turn results, dynamic tool calls, and sandbox policy normalization |
 | `tests/config.test.ts` | Config defaults, env-backed values, and required ClickUp scope validation |
 | `tests/env.test.ts` | `.env` parsing, quoted values, inline comments, and `.env.local` precedence |
 | `tests/http.test.ts` | Dashboard HTML response shell, EventSource client bootstrap, favicon suppression, and SSE snapshot streaming |
 | `tests/orchestrator.test.ts` | Dispatch eligibility, continuation retries, blocker gating, blocked issue holding, snapshot notification coalescing, and failure retry behavior |
-| `tests/prompt.test.ts` | Prompt rendering, continuation prompt wording, and environment preflight prefixing |
+| `tests/prompt.test.ts` | Prompt rendering, compact continuation prompt wording, and environment preflight prefixing |
 | `tests/shell.test.ts` | Login-shell selection and fallback |
-| `tests/workflow.test.ts` | Workflow YAML parsing and default path resolution |
+| `tests/workflow.test.ts` | Workflow YAML parsing, default path resolution, and required PR/branch-cleanup guidance in the example workflow |
 
 Fixture map:
 

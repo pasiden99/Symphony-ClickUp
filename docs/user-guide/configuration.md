@@ -92,6 +92,8 @@ Retry behavior:
 - first retry waits about 10 seconds
 - later retries back off exponentially until `max_retry_backoff_ms`
 
+Token note: each continuation turn runs against the same Codex thread history, so high `agent.max_turns` values are useful for autonomy but can make stalled tasks expensive.
+
 ## `codex`
 
 | Key | Required | Default | Notes |
@@ -108,6 +110,8 @@ Retry behavior:
 | `codex.read_timeout_ms` | No | `5000` | RPC request/response timeout |
 | `codex.stall_timeout_ms` | No | `300000` | Cancels a run if no Codex event is seen within this window |
 
+Token note: `codex.reasoning_effort` can materially affect output/reasoning token use. Keep higher values for difficult work; use lower values in workflows dominated by routine implementation tasks.
+
 Example:
 
 ```yaml
@@ -120,6 +124,12 @@ codex:
 ```
 
 Prefer keeping model and effort settings in explicit workflow keys unless you have a shell-specific reason to inline them into `codex.command`.
+
+## GitHub PR Branch Cleanup
+
+If your workflow asks Codex to create and merge GitHub pull requests, enable the repository setting **Automatically delete head branches** under GitHub repository settings. This lets GitHub remove same-repository PR branches after merge while preserving the PR, commit, and merge history.
+
+The example workflow also tells Codex to delete the merged remote PR branch during the `Merging` route when possible. That keeps branch lists clean even when automatic cleanup is unavailable or has not run yet. Keep long-lived branches such as `main`, `develop`, `release/*`, deployment branches, and open PR branches.
 
 ## `screenshots`
 
@@ -239,3 +249,13 @@ This is useful because your workflow prompt can instruct Codex to:
 - update task status
 - update the task description
 - attach browser screenshots for local visual review
+
+To reduce agent context growth, ClickUp read/update tools return compact projected JSON by default instead of raw ClickUp API payloads.
+
+Optional tool arguments:
+
+| Tool | Option | Behavior |
+| --- | --- | --- |
+| `clickup_get_task` | `includeRaw: true` | Return the raw ClickUp task payload for troubleshooting or fields outside the compact projection |
+| `clickup_get_task_comments` | `includeRaw: true` | Return the raw ClickUp comments payload |
+| `clickup_update_task` | `returnTask: true` | After updating, fetch and return compact refreshed task details instead of only an acknowledgement |

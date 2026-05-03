@@ -14,7 +14,7 @@ This page lists the runtime and integration assumptions for Symphony ClickUp.
 | Codex CLI | A CLI build that supports `codex app-server` | The command must work in the same shell environment Symphony uses. |
 | Codex app-server | Compatible with Symphony's JSON-RPC-like session, turn, and dynamic-tool flow | Keep `codex.command`, `codex.model`, and `codex.reasoning_effort` in `WORKFLOW.md` aligned with your installed Codex version. |
 | Git | Required | Used by typical workspace hooks and by agent workflows that create branches or PRs. |
-| GitHub CLI | Optional | Useful when your workflow prompt asks Codex to create or merge GitHub PRs. |
+| GitHub CLI | Optional | Useful when your workflow prompt asks Codex to create or merge GitHub PRs. The active `gh` account must be able to access the workspace repository for PR operations. |
 | Playwright Chromium | Optional | Required only for the opt-in screenshot capture tool and its gated smoke test. |
 
 ## Install Notes

@@ -49,6 +49,7 @@ export interface CodexTurnResult {
 
 export class CodexAppServerClient {
   private readonly logger: Logger;
+  private cachedDynamicToolRegistrationField: DynamicToolRegistrationField | null = null;
 
   constructor(
     private readonly config: CodexConfig,
@@ -59,7 +60,16 @@ export class CodexAppServerClient {
   }
 
   async startSession(options: StartSessionOptions): Promise<CodexSession> {
-    return CodexSession.start(this.config, this.logger, options, this.dynamicToolHandler);
+    return CodexSession.start(
+      this.config,
+      this.logger,
+      options,
+      this.dynamicToolHandler,
+      this.cachedDynamicToolRegistrationField,
+      (registrationField) => {
+        this.cachedDynamicToolRegistrationField = registrationField;
+      }
+    );
   }
 }
 
@@ -90,7 +100,9 @@ export class CodexSession {
     child: ChildProcessWithoutNullStreams,
     readonly workspacePath: string,
     onEvent: (event: LiveSessionEvent) => void,
-    dynamicToolHandler: DynamicToolHandler | null
+    dynamicToolHandler: DynamicToolHandler | null,
+    private readonly preferredDynamicToolRegistrationField: DynamicToolRegistrationField | null = null,
+    private readonly onDynamicToolRegistrationField?: (registrationField: DynamicToolRegistrationField | null) => void
   ) {
     this.child = child;
     this.onEvent = onEvent;
@@ -109,14 +121,25 @@ export class CodexSession {
     config: CodexConfig,
     logger: Logger,
     options: StartSessionOptions,
-    dynamicToolHandler: DynamicToolHandler | null
+    dynamicToolHandler: DynamicToolHandler | null,
+    preferredDynamicToolRegistrationField: DynamicToolRegistrationField | null = null,
+    onDynamicToolRegistrationField?: (registrationField: DynamicToolRegistrationField | null) => void
   ): Promise<CodexSession> {
     const child = spawn(resolveLoginShell(), ["-c", config.command], {
       cwd: options.workspacePath,
       stdio: ["pipe", "pipe", "pipe"]
     });
 
-    const session = new CodexSession(config, logger, child, options.workspacePath, options.onEvent, dynamicToolHandler);
+    const session = new CodexSession(
+      config,
+      logger,
+      child,
+      options.workspacePath,
+      options.onEvent,
+      dynamicToolHandler,
+      preferredDynamicToolRegistrationField,
+      onDynamicToolRegistrationField
+    );
     session.startReaders();
     await session.initialize();
     return session;
@@ -248,6 +271,7 @@ export class CodexSession {
 
     this.threadId = extractThreadId(threadStart.response);
     this.dynamicToolRegistrationField = threadStart.registrationField;
+    this.onDynamicToolRegistrationField?.(threadStart.registrationField);
     if (this.toolSpecs.length > 0) {
       this.emit({
         event: this.dynamicToolRegistrationField ? "dynamic_tools_advertised" : "dynamic_tools_unavailable",
@@ -279,7 +303,7 @@ export class CodexSession {
       };
     }
 
-    for (const registrationField of ["dynamicTools", "dynamic_tools", "tools"] as const) {
+    for (const registrationField of orderDynamicToolRegistrationFields(this.preferredDynamicToolRegistrationField)) {
       try {
         return {
           response: await this.request("thread/start", {
@@ -890,6 +914,17 @@ function firstDefined<T>(...values: T[]): T | undefined {
   }
 
   return undefined;
+}
+
+function orderDynamicToolRegistrationFields(
+  preferred: DynamicToolRegistrationField | null
+): DynamicToolRegistrationField[] {
+  const fields: DynamicToolRegistrationField[] = ["dynamicTools", "dynamic_tools", "tools"];
+  if (!preferred) {
+    return fields;
+  }
+
+  return [preferred, ...fields.filter((field) => field !== preferred)];
 }
 
 export function materializeTurnSandboxPolicy(policy: unknown, workspacePath: string): unknown {

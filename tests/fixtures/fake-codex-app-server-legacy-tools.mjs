@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { appendFileSync } from "node:fs";
 import readline from "node:readline";
 
 const rl = readline.createInterface({
@@ -22,6 +23,17 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
+    const field = Array.isArray(message.params?.dynamicTools)
+      ? "dynamicTools"
+      : Array.isArray(message.params?.dynamic_tools)
+        ? "dynamic_tools"
+        : Array.isArray(message.params?.tools)
+          ? "tools"
+          : "none";
+    if (process.env.TOOL_FIELD_LOG_PATH) {
+      appendFileSync(process.env.TOOL_FIELD_LOG_PATH, `${field}\n`);
+    }
+
     if (Array.isArray(message.params?.dynamicTools) || Array.isArray(message.params?.dynamic_tools)) {
       send({
         id: message.id,

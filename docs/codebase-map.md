@@ -77,16 +77,16 @@ Annotated authored tree:
 │   └── tracker/
 │       └── clickup.ts                    # ClickUp API adapter and issue normalization layer.
 ├── tests/
-│   ├── clickup-dynamic-tools.test.ts     # Dynamic tool request/response behavior and task-id resolution rules.
+│   ├── clickup-dynamic-tools.test.ts     # Dynamic tool projections, request/response behavior, and task-id resolution rules.
 │   ├── clickup-tracker.test.ts           # ClickUp task fetching, pagination, blockers, and workspace-id errors.
-│   ├── codex-client.test.ts              # Codex session lifecycle, blocked-input behavior, dynamic tools, and sandbox policy normalization.
+│   ├── codex-client.test.ts              # Codex session lifecycle, blocked-input behavior, cached dynamic tool registration, and sandbox policy normalization.
 │   ├── config.test.ts                    # Effective config defaults, env-backed values, and validation failures.
 │   ├── env.test.ts                       # Env parsing and precedence between `.env`, `.env.local`, and shell vars.
 │   ├── http.test.ts                      # Fastify dashboard HTML, EventSource client bootstrap, and SSE stream behavior.
 │   ├── orchestrator.test.ts              # Dispatch gating, continuation retries, blocked issue holding, and snapshot notification behavior.
-│   ├── prompt.test.ts                    # Liquid prompt data, continuation wording, and environment notice prefixing.
+│   ├── prompt.test.ts                    # Liquid prompt data, compact continuation wording, and environment notice prefixing.
 │   ├── shell.test.ts                     # Shell fallback logic.
-│   ├── workflow.test.ts                  # Workflow front matter parsing and default path resolution.
+│   ├── workflow.test.ts                  # Workflow front matter parsing, default path resolution, and required workflow guidance.
 │   └── fixtures/
 │       ├── fake-codex-app-server-legacy-tools.mjs # Test server for older dynamic tool registration shapes.
 │       └── fake-codex-app-server.mjs     # Test server for turn lifecycle, tool calls, and request-user-input flow.

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { AgentRunner } from "../src/agent-runner.js";
+import { AgentRunner, collectEnvironmentPreflight, parseGithubRepository } from "../src/agent-runner.js";
 import { createLogger } from "../src/logging.js";
 import type { EffectiveConfig, Issue, TrackerClient } from "../src/types.js";
 import { WorkspaceManager } from "../src/workspace.js";
@@ -60,6 +60,81 @@ describe("AgentRunner", () => {
 
     expect(secondResult.status).toBe("succeeded");
     expect(trackerCalls).toEqual(["team-1", "team-2"]);
+  });
+
+  test("environment preflight verifies active GitHub CLI repo access", async () => {
+    const calls: Array<{ command: string; args: string[]; cwd: string }> = [];
+
+    const preflight = await collectEnvironmentPreflight("/tmp/workspace", async (command, args, cwd) => {
+      calls.push({ command, args, cwd });
+
+      if (command === "gh" && args.join(" ") === "auth status") {
+        return {
+          code: 0,
+          stdout: "github.com\n  ✓ Logged in to github.com account wrong-user (keyring)\n",
+          stderr: ""
+        };
+      }
+
+      if (command === "git" && args.join(" ") === "remote get-url origin") {
+        return {
+          code: 0,
+          stdout: "https://github.com/acme/private-repo.git\n",
+          stderr: ""
+        };
+      }
+
+      if (command === "gh" && args[0] === "repo" && args[1] === "view") {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "GraphQL: Could not resolve to a Repository with the name 'acme/private-repo'. (repository)"
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+
+    expect(calls.map((call) => [call.command, ...call.args].join(" "))).toEqual([
+      "gh auth status",
+      "git remote get-url origin",
+      "gh repo view acme/private-repo --json nameWithOwner"
+    ]);
+    expect(preflight.githubCli.ok).toBe(false);
+    expect(preflight.githubCli.summary).toContain("GitHub CLI cannot access repository acme/private-repo");
+    expect(preflight.notices).toHaveLength(1);
+    expect(preflight.notices[0]).toContain("try available PR fallbacks");
+    expect(preflight.notices[0]).toContain("switching to a logged-in account");
+    expect(preflight.notices[0]).toContain("block only if no PR path works");
+  });
+
+  test("environment preflight stays quiet when GitHub CLI can access the repo", async () => {
+    const preflight = await collectEnvironmentPreflight("/tmp/workspace", async (command, args) => {
+      if (command === "gh" && args.join(" ") === "auth status") {
+        return { code: 0, stdout: "github.com\n  ✓ Logged in\n", stderr: "" };
+      }
+
+      if (command === "git" && args.join(" ") === "remote get-url origin") {
+        return { code: 0, stdout: "git@github.com:acme/private-repo.git\n", stderr: "" };
+      }
+
+      if (command === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { code: 0, stdout: "{\"nameWithOwner\":\"acme/private-repo\"}", stderr: "" };
+      }
+
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+
+    expect(preflight.githubCli.ok).toBe(true);
+    expect(preflight.githubCli.summary).toContain("repo access are available for acme/private-repo");
+    expect(preflight.notices).toEqual([]);
+  });
+
+  test("parses common GitHub remote URL formats", () => {
+    expect(parseGithubRepository("https://github.com/acme/widgets.git")).toBe("acme/widgets");
+    expect(parseGithubRepository("git@github.com:acme/widgets.git")).toBe("acme/widgets");
+    expect(parseGithubRepository("ssh://git@github.com/acme/widgets.git")).toBe("acme/widgets");
+    expect(parseGithubRepository("https://gitlab.com/acme/widgets.git")).toBeNull();
   });
 });
 

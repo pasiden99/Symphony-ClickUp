@@ -1,4 +1,6 @@
 import path from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -229,6 +231,60 @@ describe("CodexAppServerClient", () => {
 
     expect(result.status).toBe("completed");
     expect(result.turnId).toBe("turn-legacy");
+  });
+
+  test("reuses the cached dynamic tool registration field for later sessions", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "symphony-codex-tools-"));
+    const logPath = path.join(tempDir, "fields.log");
+    const toolHandler: DynamicToolHandler = {
+      listTools: () => [
+        {
+          name: "clickup_get_task",
+          description: "Get a ClickUp task",
+          inputSchema: {
+            type: "object",
+            required: ["taskId"],
+            properties: {
+              taskId: { type: "string" }
+            }
+          }
+        }
+      ],
+      callTool: vi.fn(async () => null)
+    };
+
+    const client = new CodexAppServerClient(
+      {
+        command: `TOOL_FIELD_LOG_PATH=${logPath} ${process.execPath} ${legacyFixturePath}`,
+        approvalPolicy: "never",
+        threadSandbox: "workspace-write",
+        turnSandboxPolicy: { type: "workspace-write" },
+        turnTimeoutMs: 5_000,
+        readTimeoutMs: 2_000,
+        stallTimeoutMs: 10_000
+      },
+      createLogger({ enabled: false }),
+      toolHandler
+    );
+
+    try {
+      const firstSession = await client.startSession({
+        workspacePath: process.cwd(),
+        onEvent: () => undefined
+      });
+      await firstSession.close();
+
+      const secondSession = await client.startSession({
+        workspacePath: process.cwd(),
+        onEvent: () => undefined
+      });
+      await secondSession.close();
+
+      const fields = (await readFile(logPath, "utf8")).trim().split(/\r?\n/);
+      expect(fields).toEqual(["dynamicTools", "dynamic_tools", "tools", "tools"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("forces the app server down when it ignores SIGTERM during close", async () => {

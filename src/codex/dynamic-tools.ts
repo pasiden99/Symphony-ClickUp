@@ -23,6 +23,10 @@ const BASE_CLICKUP_TOOL_SPECS: DynamicToolSpec[] = [
         taskId: {
           type: "string",
           description: "ClickUp task ID."
+        },
+        includeRaw: {
+          type: "boolean",
+          description: "Return the raw ClickUp API payload instead of the compact task projection."
         }
       },
       additionalProperties: false
@@ -55,6 +59,10 @@ const BASE_CLICKUP_TOOL_SPECS: DynamicToolSpec[] = [
         markdownDescription: {
           type: "string",
           description: "Markdown task description."
+        },
+        returnTask: {
+          type: "boolean",
+          description: "Return compact refreshed task details after the update. Defaults to false."
         }
       },
       additionalProperties: false
@@ -78,6 +86,10 @@ const BASE_CLICKUP_TOOL_SPECS: DynamicToolSpec[] = [
         startId: {
           type: "string",
           description: "Pagination comment ID from the oldest returned comment."
+        },
+        includeRaw: {
+          type: "boolean",
+          description: "Return the raw ClickUp comments payload instead of compact comments."
         }
       },
       additionalProperties: false
@@ -243,7 +255,8 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
   }
 
   private async getTask(args: unknown): Promise<DynamicToolResponse> {
-    const taskId = this.resolveTaskId(asObject(args));
+    const parsed = asObject(args);
+    const taskId = this.resolveTaskId(parsed);
     const task = await this.requestJson(`/task/${encodeURIComponent(taskId)}`, {
       method: "GET",
       query: {
@@ -251,7 +264,7 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
       }
     });
 
-    return successResult(task);
+    return successResult(asOptionalBoolean(firstDefined(parsed.includeRaw, parsed.include_raw), false, "includeRaw") ? task : projectTask(task));
   }
 
   private async updateTask(args: unknown): Promise<DynamicToolResponse> {
@@ -288,6 +301,16 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
       body
     });
 
+    const applied = Object.keys(body);
+    const returnTask = asOptionalBoolean(firstDefined(parsed.returnTask, parsed.return_task), false, "returnTask");
+    if (!returnTask) {
+      return successResult({
+        taskId,
+        applied,
+        updated: true
+      });
+    }
+
     const task = await this.requestJson(`/task/${encodeURIComponent(taskId)}`, {
       method: "GET",
       query: {
@@ -295,7 +318,12 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
       }
     });
 
-    return successResult(task);
+    return successResult({
+      taskId,
+      applied,
+      updated: true,
+      task: projectTask(task)
+    });
   }
 
   private async getTaskComments(args: unknown): Promise<DynamicToolResponse> {
@@ -316,7 +344,11 @@ export class ClickUpDynamicToolHandler implements DynamicToolHandler {
       query
     });
 
-    return successResult(comments);
+    return successResult(
+      asOptionalBoolean(firstDefined(parsed.includeRaw, parsed.include_raw), false, "includeRaw")
+        ? comments
+        : projectComments(comments)
+    );
   }
 
   private async createTaskComment(args: unknown): Promise<DynamicToolResponse> {
@@ -611,13 +643,154 @@ function ensureTrailingSeparator(value: string): string {
   return value.endsWith(path.sep) ? value : `${value}${path.sep}`;
 }
 
+function projectTask(value: unknown): Record<string, unknown> {
+  const task = asRecord(value);
+  if (!task) {
+    return {};
+  }
+
+  const status = asRecord(task.status);
+  const list = asRecord(task.list);
+  const priority = asRecord(task.priority);
+
+  return compactObject({
+    id: task.id,
+    custom_id: task.custom_id,
+    name: task.name,
+    status: compactObject({
+      status: status?.status,
+      type: status?.type
+    }),
+    description: task.description,
+    markdown_description: firstDefined(task.markdown_description, task.markdownDescription),
+    url: task.url,
+    date_created: task.date_created,
+    date_updated: task.date_updated,
+    priority: priority
+      ? compactObject({
+          id: priority.id,
+          priority: priority.priority,
+          color: priority.color,
+          orderindex: priority.orderindex
+        })
+      : task.priority,
+    tags: projectArray(task.tags, projectTag),
+    parent: task.parent,
+    list: list
+      ? compactObject({
+          id: list.id,
+          name: list.name
+        })
+      : undefined,
+    assignees: projectArray(task.assignees, projectUser),
+    dependencies: projectArray(task.dependencies, projectDependency)
+  });
+}
+
+function projectComments(value: unknown): Record<string, unknown> {
+  const payload = asRecord(value);
+  const rawComments = Array.isArray(payload?.comments) ? payload.comments : Array.isArray(value) ? value : [];
+  const comments = rawComments.map(projectComment).filter((comment) => Object.keys(comment).length > 0);
+
+  return {
+    comments,
+    ...compactObject({
+      last_page: payload?.last_page,
+      start: payload?.start,
+      start_id: firstDefined(payload?.start_id, payload?.startId)
+    })
+  };
+}
+
+function projectComment(value: unknown): Record<string, unknown> {
+  const comment = asRecord(value);
+  if (!comment) {
+    return {};
+  }
+
+  return compactObject({
+    id: comment.id,
+    comment_text: firstDefined(comment.comment_text, comment.commentText, comment.text),
+    date: firstDefined(comment.date, comment.date_created, comment.dateCreated),
+    user: projectUser(firstDefined(comment.user, comment.user_info, comment.userInfo))
+  });
+}
+
+function projectTag(value: unknown): Record<string, unknown> {
+  const tag = asRecord(value);
+  if (!tag) {
+    return {};
+  }
+
+  return compactObject({
+    name: tag.name,
+    tag_fg: tag.tag_fg,
+    tag_bg: tag.tag_bg
+  });
+}
+
+function projectUser(value: unknown): Record<string, unknown> {
+  const user = asRecord(value);
+  if (!user) {
+    return {};
+  }
+
+  return compactObject({
+    id: user.id,
+    username: firstDefined(user.username, user.name),
+    email: user.email
+  });
+}
+
+function projectDependency(value: unknown): Record<string, unknown> {
+  const dependency = asRecord(value);
+  if (!dependency) {
+    return {};
+  }
+
+  return compactObject({
+    task_id: dependency.task_id,
+    depends_on: dependency.depends_on,
+    type: dependency.type
+  });
+}
+
+function projectArray(value: unknown, projector: (value: unknown) => Record<string, unknown>): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.map(projector).filter((item) => Object.keys(item).length > 0);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function compactObject(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => {
+      if (entryValue === undefined || entryValue === null) {
+        return false;
+      }
+      if (Array.isArray(entryValue)) {
+        return entryValue.length > 0;
+      }
+      if (typeof entryValue === "object") {
+        return Object.keys(entryValue as Record<string, unknown>).length > 0;
+      }
+      return true;
+    })
+  );
+}
+
 function successResult(payload: unknown): DynamicToolResponse {
   return {
     success: true,
     contentItems: [
       {
         type: "inputText",
-        text: JSON.stringify(payload, null, 2)
+        text: JSON.stringify(payload)
       }
     ]
   };
@@ -629,7 +802,7 @@ function failureResult(payload: unknown): DynamicToolResponse {
     contentItems: [
       {
         type: "inputText",
-        text: JSON.stringify(payload, null, 2)
+        text: JSON.stringify(payload)
       }
     ]
   };

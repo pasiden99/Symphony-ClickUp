@@ -38,7 +38,7 @@ This page documents the core work engine of Symphony: how issues are selected, c
    - ensures the workspace exists,
    - clears transient directories,
    - runs `beforeRun`,
-   - performs GitHub CLI preflight,
+   - performs GitHub CLI preflight, including active-account access to the workspace's GitHub origin when one is configured,
    - starts a `CodexSession`,
    - renders the initial prompt with Liquid,
    - sends continuation prompts on subsequent turns,
@@ -68,8 +68,8 @@ Workspace lifecycle details from `src/workspace.ts`:
 Prompt behavior from `src/prompt.ts`:
 
 - `renderIssuePrompt()` renders the workflow body with strict Liquid semantics.
-- `buildContinuationPrompt()` intentionally forbids `mcp__clickup__*` usage and repeats the raw ClickUp task ID to keep continuation turns aligned with Symphony tooling.
-- `prependEnvironmentContext()` injects preflight notices, such as missing `gh` auth, only for the first turn.
+- `buildContinuationPrompt()` is intentionally compact; it names the task, turn count, workspace-state inspection, and complete-or-blocked stopping condition without restating first-turn tool contracts.
+- `prependEnvironmentContext()` injects preflight notices, such as missing `gh` or missing active-account repo access, only for the first turn.
 - `AgentRunner` now maps interactive-input failures into `RunAttemptResult.status = "blocked"` so the orchestrator can hold the issue instead of backing off and retrying immediately.
 
 ## Important Exports and Classes

@@ -22,11 +22,11 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
    - `initialize`
    - `initialized`
    - `thread/start`
-4. When dynamic tools are available, `startThread()` tries three registration field names in order:
+4. When dynamic tools are available, `startThread()` tries the last successful registration field first, then falls back through compatible field names:
    - `dynamicTools`
    - `dynamic_tools`
    - `tools`
-   If all fail, Symphony falls back to a thread start without tools and emits `dynamic_tools_unavailable`.
+   `CodexAppServerClient` caches the working field for later sessions in the same process. If all fields fail, Symphony falls back to a thread start without tools and emits `dynamic_tools_unavailable`.
 5. `runTurn()` sends `turn/start` with:
    - thread ID
    - prompt text
@@ -51,7 +51,7 @@ This page explains how Symphony launches Codex app-server, turns workflow prompt
    - `clickup_get_task_comments`
    - `clickup_create_task_comment`
    - `clickup_capture_review_screenshot` when `screenshots.enabled` is true
-11. Tool responses are wrapped as `DynamicToolResponse` objects with JSON-serialized `contentItems` so the app-server can feed them back into the turn.
+11. Tool responses are wrapped as `DynamicToolResponse` objects with compact JSON-serialized `contentItems` so the app-server can feed them back into the turn without pretty-print whitespace.
 12. `close()` tears down pending requests, rejects active work, sends `SIGTERM`, waits briefly, then escalates to `SIGKILL` if needed.
 
 Interactive-input nuance introduced in `src/codex/client.ts`:
@@ -71,8 +71,9 @@ Sandbox normalization behavior in `materializeTurnSandboxPolicy()`:
 
 Dynamic tool behavior details:
 
-- `clickup_update_task` accepts `status`, `name`, `description`, and `markdownDescription`.
-- `clickup_get_task_comments` accepts optional pagination via `start` and `startId`.
+- `clickup_get_task` returns a compact projected task shape by default and accepts `includeRaw` for the full ClickUp payload.
+- `clickup_update_task` accepts `status`, `name`, `description`, `markdownDescription`, and optional `returnTask`; by default it returns only a compact acknowledgement instead of re-fetching the task.
+- `clickup_get_task_comments` returns compact projected comments by default, accepts optional pagination via `start` and `startId`, and accepts `includeRaw` for the full ClickUp comments payload.
 - `clickup_capture_review_screenshot` accepts a local URL, label, optional viewport, full-page flag, and wait delay.
 - Review screenshots are captured with Playwright, stored under the configured artifact directory, uploaded to ClickUp as task attachments, and followed by a `## Codex Screenshot` comment.
 - Screenshot URLs are restricted to local app URLs and workspace-local `file://` paths.

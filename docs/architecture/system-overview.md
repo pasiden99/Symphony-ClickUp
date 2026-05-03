@@ -36,7 +36,7 @@ End-to-end runtime flow:
    - ensures the workspace exists,
    - removes transient artifacts such as `tmp` and `.elixir_ls`,
    - runs workspace hooks,
-   - performs environment preflight checks such as `gh auth status`,
+   - performs environment preflight checks such as GitHub CLI authentication and active-account repository access,
    - starts a `CodexSession`,
    - renders the first prompt from `WORKFLOW.md`,
    - runs continuation turns until the task leaves an active state or `agent.maxTurns` is reached.

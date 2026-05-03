@@ -11,6 +11,8 @@ import type { EffectiveConfig, Issue, LiveSessionEvent, RunAttemptResult, Tracke
 import { formatError, nowIso } from "./utils.js";
 import { WorkspaceManager } from "./workspace.js";
 
+const MAX_PREFLIGHT_SUMMARY_CHARS = 240;
+
 export interface RunAttemptOptions {
   issue: Issue;
   attempt: number | null;
@@ -32,6 +34,12 @@ interface EnvironmentPreflight {
   notices: string[];
   githubCli: CliCapabilityProbe;
 }
+
+type ProcessRunner = (
+  command: string,
+  args: string[],
+  cwd: string
+) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 export class AgentRunner {
   private readonly logger: Logger;
@@ -263,18 +271,21 @@ function isInteractiveInputFailure(message: string | null): boolean {
   );
 }
 
-async function collectEnvironmentPreflight(workspacePath: string): Promise<EnvironmentPreflight> {
-  const githubCli = await probeGithubCliAuth(workspacePath);
+export async function collectEnvironmentPreflight(
+  workspacePath: string,
+  processRunner: ProcessRunner = runProcess
+): Promise<EnvironmentPreflight> {
+  const githubCli = await probeGithubCliAccess(workspacePath, processRunner);
   const notices: string[] = [];
 
   if (!githubCli.available) {
-    notices.push("GitHub CLI (`gh`) is not installed in this environment.");
+    notices.push(
+      "GitHub CLI (`gh`) is not installed; use another available PR path if possible and block only if no PR path works."
+    );
   } else if (!githubCli.ok) {
     notices.push(
-      `GitHub CLI authentication is unavailable for PR work in this environment: ${githubCli.summary}`
+      `GitHub CLI PR access needs attention (${truncatePreflightSummary(githubCli.summary)}); avoid repeated \`gh\` retries, try available PR fallbacks such as switching to a logged-in account with repo access, and block only if no PR path works.`
     );
-    notices.push("Do not burn turns repeatedly retrying `gh` commands in this session.");
-    notices.push("If implementation completes, record the blocker in ClickUp and stop at the blocker.");
   }
 
   return {
@@ -283,25 +294,50 @@ async function collectEnvironmentPreflight(workspacePath: string): Promise<Envir
   };
 }
 
-async function probeGithubCliAuth(workspacePath: string): Promise<CliCapabilityProbe> {
+async function probeGithubCliAccess(workspacePath: string, processRunner: ProcessRunner): Promise<CliCapabilityProbe> {
   try {
-    const { code, stdout, stderr } = await runProcess("gh", ["auth", "status"], workspacePath);
-    const details = [stdout, stderr].filter((chunk) => chunk.trim() !== "").join("\n").trim() || null;
+    const authResult = await processRunner("gh", ["auth", "status"], workspacePath);
+    const authDetails =
+      [authResult.stdout, authResult.stderr].filter((chunk) => chunk.trim() !== "").join("\n").trim() || null;
 
-    if (code === 0) {
+    if (authResult.code !== 0) {
+      return {
+        available: true,
+        ok: false,
+        summary: summarizeCliFailure(authDetails) ?? "GitHub CLI authentication is unavailable.",
+        details: authDetails
+      };
+    }
+
+    const repo = await detectGithubRepository(workspacePath, processRunner);
+    if (!repo) {
       return {
         available: true,
         ok: true,
-        summary: "GitHub CLI authentication is available.",
-        details
+        summary: "GitHub CLI authentication is available; repository access was not checked because origin is not a GitHub remote.",
+        details: authDetails
+      };
+    }
+
+    const repoResult = await processRunner("gh", ["repo", "view", repo, "--json", "nameWithOwner"], workspacePath);
+    const repoDetails =
+      [repoResult.stdout, repoResult.stderr].filter((chunk) => chunk.trim() !== "").join("\n").trim() || null;
+    if (repoResult.code === 0) {
+      return {
+        available: true,
+        ok: true,
+        summary: `GitHub CLI authentication and repo access are available for ${repo}.`,
+        details: [authDetails, repoDetails].filter(Boolean).join("\n\n") || null
       };
     }
 
     return {
       available: true,
       ok: false,
-      summary: summarizeCliFailure(details) ?? "GitHub CLI authentication is unavailable.",
-      details
+      summary: `GitHub CLI cannot access repository ${repo}: ${
+        summarizeCliFailure(repoDetails) ?? "repository access check failed."
+      }`,
+      details: [authDetails, repoDetails].filter(Boolean).join("\n\n") || null
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -317,9 +353,42 @@ async function probeGithubCliAuth(workspacePath: string): Promise<CliCapabilityP
     return {
       available: true,
       ok: false,
-      summary: `GitHub CLI probe failed: ${message}`,
+      summary: `GitHub CLI probe failed: ${truncatePreflightSummary(message)}`,
       details: null
     };
+  }
+}
+
+async function detectGithubRepository(workspacePath: string, processRunner: ProcessRunner): Promise<string | null> {
+  const { code, stdout } = await processRunner("git", ["remote", "get-url", "origin"], workspacePath);
+  if (code !== 0) {
+    return null;
+  }
+
+  return parseGithubRepository(stdout.trim());
+}
+
+export function parseGithubRepository(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim().replace(/\.git$/i, "");
+  const sshMatch = trimmed.match(/^(?:ssh:\/\/)?git@github\.com[:/]([^/]+)\/(.+)$/i);
+  if (sshMatch?.[1] && sshMatch[2]) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname.toLowerCase() !== "github.com") {
+      return null;
+    }
+
+    const parts = parsed.pathname.replace(/^\/+/, "").split("/");
+    if (parts.length < 2 || !parts[0] || !parts[1]) {
+      return null;
+    }
+
+    return `${parts[0]}/${parts.slice(1).join("/")}`;
+  } catch {
+    return null;
   }
 }
 
@@ -371,5 +440,12 @@ function summarizeCliFailure(details: string | null): string | null {
           !line.startsWith("- To forget about")
       ) ?? trimmed.split(/\r?\n/).map((line) => line.trim()).find((line) => line !== "");
 
-  return preferredLine ?? null;
+  return preferredLine ? truncatePreflightSummary(preferredLine) : null;
+}
+
+function truncatePreflightSummary(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > MAX_PREFLIGHT_SUMMARY_CHARS
+    ? `${compact.slice(0, MAX_PREFLIGHT_SUMMARY_CHARS - 3)}...`
+    : compact;
 }

@@ -82,7 +82,7 @@ These interfaces are intentionally local to the adapter because the rest of the 
 Related behavior also appears in:
 
 - `tests/orchestrator.test.ts`, which consumes normalized `Issue` objects.
-- `tests/clickup-dynamic-tools.test.ts`, which validates the write-side ClickUp tools exposed to Codex rather than the tracker client itself.
+- `tests/clickup-dynamic-tools.test.ts`, which validates the agent-facing ClickUp tools exposed to Codex, including compact task/comment projections and update acknowledgements.
 
 ## Related Docs
 - [Domain Model](../architecture/domain-model.md)

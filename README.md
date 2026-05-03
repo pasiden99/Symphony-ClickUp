@@ -65,7 +65,7 @@ Before you start, make sure you have:
 
 Optional but useful:
 
-- GitHub CLI (`gh`) for PR-related steps inside your workflow prompt
+- GitHub CLI (`gh`) for PR-related steps inside your workflow prompt; the active account must be able to access the workspace repository
 - Playwright Chromium browsers (`npx playwright install chromium`) for opt-in review screenshots
 
 See the [Compatibility Guide](./docs/user-guide/compatibility.md) for version and integration details.
@@ -209,6 +209,7 @@ The intended workflow is:
 3. edit the local file for the machine or workspace you are running on
 
 In this repository, `WORKFLOW.md` is treated as local runtime state and is ignored by Git.
+The checked-in `WORKFLOW-EXAMPLE.md` keeps the prompt intentionally compact because that body is sent to every agent first turn.
 
 ## A Minimal Mental Model
 

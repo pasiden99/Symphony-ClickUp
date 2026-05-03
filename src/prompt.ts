@@ -27,15 +27,7 @@ export async function renderIssuePrompt(
 }
 
 export function buildContinuationPrompt(issue: Issue, turnNumber: number, maxTurns: number): string {
-  return [
-    `Continue working on ClickUp task ${issue.identifier}: ${issue.title}.`,
-    "Use the existing thread history instead of restating the original task.",
-    `This is continuation turn ${turnNumber} of ${maxTurns}.`,
-    `For ClickUp task reads and mutations, use only Symphony's first-party tools with raw ClickUp task ID ${issue.id}.`,
-    `Do not use ${issue.identifier} as a ClickUp task ID; it is only Symphony's issue identifier.`,
-    "Do not call any mcp__clickup__* tools.",
-    "Inspect the current workspace state, continue the implementation, and stop when the task is complete or blocked."
-  ].join("\n");
+  return `Continue ClickUp task ${issue.identifier}: ${issue.title}. Inspect workspace state, continue implementation, and stop when complete or blocked. Continuation turn ${turnNumber}/${maxTurns}.`;
 }
 
 export function prependEnvironmentContext(prompt: string, notices: string[]): string {

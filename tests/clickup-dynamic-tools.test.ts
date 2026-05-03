@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ClickUpDynamicToolHandler } from "../src/codex/dynamic-tools.js";
+import { ClickUpDynamicToolHandler, type DynamicToolResponse } from "../src/codex/dynamic-tools.js";
 import type { ScreenshotCapturer } from "../src/codex/screenshots.js";
 import { createLogger } from "../src/logging.js";
 
@@ -16,7 +16,7 @@ describe("ClickUpDynamicToolHandler", () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  test("updates a task and returns refreshed JSON", async () => {
+  test("updates a task and returns compact acknowledgement without a refreshed GET by default", async () => {
     const requests: Array<{ url: string; method: string; body: string | null }> = [];
     const fetchMock: typeof fetch = async (input, init) => {
       const url = String(input);
@@ -28,14 +28,6 @@ describe("ClickUpDynamicToolHandler", () => {
 
       if (url.includes("/task/1") && (init?.method ?? "GET") === "PUT") {
         return jsonResponse({ ok: true });
-      }
-
-      if (url.includes("/task/1") && (init?.method ?? "GET") === "GET") {
-        return jsonResponse({
-          id: "1",
-          name: "Implement runner",
-          status: { status: "In Progress" }
-        });
       }
 
       throw new Error(`Unexpected fetch URL: ${url}`);
@@ -59,9 +51,69 @@ describe("ClickUpDynamicToolHandler", () => {
         markdown_description: "## Codex Worklog"
       })
     });
-    expect(requests[1]).toMatchObject({
-      url: "https://api.clickup.com/api/v2/task/1?include_markdown_description=true",
-      method: "GET"
+    expect(requests).toHaveLength(1);
+    expect(parseToolJson(result)).toEqual({
+      taskId: "1",
+      applied: ["status", "markdown_description"],
+      updated: true
+    });
+    expect(result?.contentItems[0]?.text).not.toContain("\n");
+  });
+
+  test("updates and returns projected task details when returnTask is true", async () => {
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : null
+      });
+
+      if (url.includes("/task/1") && (init?.method ?? "GET") === "PUT") {
+        return jsonResponse({ ok: true });
+      }
+
+      if (url === "https://api.clickup.com/api/v2/task/1?include_markdown_description=true") {
+        return jsonResponse({
+          id: "1",
+          custom_id: "CU-1",
+          name: "Implement runner",
+          status: { status: "In Progress", type: "custom", extra: "ignored" },
+          markdown_description: "## Acceptance",
+          url: "https://app.clickup.com/t/1",
+          assignees: [{ id: 7, username: "Dev", email: "dev@example.com", color: "#fff" }],
+          custom_fields: [{ id: "expensive" }]
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    const handler = new ClickUpDynamicToolHandler(baseConfig(), createLogger({ enabled: false }), fetchMock);
+    const result = await handler.callTool("clickup_update_task", {
+      taskId: "1",
+      status: "In Progress",
+      returnTask: true
+    });
+
+    expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      "PUT https://api.clickup.com/api/v2/task/1",
+      "GET https://api.clickup.com/api/v2/task/1?include_markdown_description=true"
+    ]);
+    expect(parseToolJson(result)).toEqual({
+      taskId: "1",
+      applied: ["status"],
+      updated: true,
+      task: {
+        id: "1",
+        custom_id: "CU-1",
+        name: "Implement runner",
+        status: { status: "In Progress", type: "custom" },
+        markdown_description: "## Acceptance",
+        url: "https://app.clickup.com/t/1",
+        assignees: [{ id: 7, username: "Dev", email: "dev@example.com" }]
+      }
     });
   });
 
@@ -162,8 +214,21 @@ describe("ClickUpDynamicToolHandler", () => {
       if (url === "https://api.clickup.com/api/v2/task/868ht62zr?include_markdown_description=true") {
         return jsonResponse({
           id: "868ht62zr",
+          custom_id: "CU-0",
           name: "Implement runner",
-          status: { status: "Todo" }
+          status: { status: "Todo", type: "open", noisy: "ignored" },
+          description: "Plain text",
+          markdown_description: "## Markdown",
+          text_content: "Text content",
+          url: "https://app.clickup.com/t/868ht62zr",
+          date_updated: "1710000000000",
+          priority: { priority: "urgent", color: "#f00", orderindex: "1", noisy: true },
+          tags: [{ name: "Frontend", tag_fg: "#111", tag_bg: "#eee", creator: "ignored" }],
+          list: { id: "list-1", name: "Sprint", access: true },
+          assignees: [{ id: 42, username: "Ada", email: "ada@example.com", initials: "A" }],
+          dependencies: [{ task_id: "2", depends_on: "3", type: 1, date_created: "ignored" }],
+          custom_fields: [{ id: "expensive" }],
+          watchers: [{ id: "ignored" }]
         });
       }
 
@@ -181,6 +246,111 @@ describe("ClickUpDynamicToolHandler", () => {
     expect(requests[0]).toMatchObject({
       url: "https://api.clickup.com/api/v2/task/868ht62zr?include_markdown_description=true",
       method: "GET"
+    });
+    expect(parseToolJson(result)).toEqual({
+      id: "868ht62zr",
+      custom_id: "CU-0",
+      name: "Implement runner",
+      status: { status: "Todo", type: "open" },
+      description: "Plain text",
+      markdown_description: "## Markdown",
+      url: "https://app.clickup.com/t/868ht62zr",
+      date_updated: "1710000000000",
+      priority: { priority: "urgent", color: "#f00", orderindex: "1" },
+      tags: [{ name: "Frontend", tag_fg: "#111", tag_bg: "#eee" }],
+      list: { id: "list-1", name: "Sprint" },
+      assignees: [{ id: 42, username: "Ada", email: "ada@example.com" }],
+      dependencies: [{ task_id: "2", depends_on: "3", type: 1 }]
+    });
+    expect(result?.contentItems[0]?.text).not.toContain("custom_fields");
+    expect(result?.contentItems[0]?.text).not.toContain("\n");
+  });
+
+  test("returns raw task payload only when includeRaw is true", async () => {
+    const fetchMock: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://api.clickup.com/api/v2/task/868ht62zr?include_markdown_description=true") {
+        return jsonResponse({
+          id: "868ht62zr",
+          name: "Implement runner",
+          custom_fields: [{ id: "raw-field" }]
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    const handler = new ClickUpDynamicToolHandler(baseConfig(), createLogger({ enabled: false }), fetchMock);
+    const result = await handler.callTool("clickup_get_task", {
+      taskId: "868ht62zr",
+      includeRaw: true
+    });
+
+    expect(parseToolJson(result)).toEqual({
+      id: "868ht62zr",
+      name: "Implement runner",
+      custom_fields: [{ id: "raw-field" }]
+    });
+  });
+
+  test("returns compact comments by default and raw comments on request", async () => {
+    const requests: string[] = [];
+    const fetchMock: typeof fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.startsWith("https://api.clickup.com/api/v2/task/868ht62zr/comment")) {
+        return jsonResponse({
+          comments: [
+            {
+              id: "c1",
+              comment_text: "Started work",
+              date: "1710000000000",
+              user: { id: 42, username: "Ada", email: "ada@example.com", color: "#fff" },
+              reactions: [{ emoji: "+1" }]
+            }
+          ],
+          last_page: false,
+          start_id: "c1",
+          extra: "ignored"
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    };
+
+    const handler = new ClickUpDynamicToolHandler(baseConfig(), createLogger({ enabled: false }), fetchMock);
+    const compact = await handler.callTool("clickup_get_task_comments", {
+      taskId: "868ht62zr",
+      start: 123,
+      startId: "c0"
+    });
+    const raw = await handler.callTool("clickup_get_task_comments", {
+      taskId: "868ht62zr",
+      includeRaw: true
+    });
+
+    expect(requests[0]).toBe("https://api.clickup.com/api/v2/task/868ht62zr/comment?start=123&start_id=c0");
+    expect(parseToolJson(compact)).toEqual({
+      comments: [
+        {
+          id: "c1",
+          comment_text: "Started work",
+          date: "1710000000000",
+          user: { id: 42, username: "Ada", email: "ada@example.com" }
+        }
+      ],
+      last_page: false,
+      start_id: "c1"
+    });
+    expect(compact?.contentItems[0]?.text).not.toContain("reactions");
+    expect(parseToolJson(raw)).toMatchObject({
+      comments: [
+        {
+          id: "c1",
+          reactions: [{ emoji: "+1" }]
+        }
+      ],
+      extra: "ignored"
     });
   });
 
@@ -406,4 +576,9 @@ function jsonResponse(body: unknown, status = 200): Response {
       "content-type": "application/json"
     }
   });
+}
+
+function parseToolJson(result: DynamicToolResponse | null): unknown {
+  expect(result).not.toBeNull();
+  return JSON.parse(result!.contentItems[0]!.text);
 }

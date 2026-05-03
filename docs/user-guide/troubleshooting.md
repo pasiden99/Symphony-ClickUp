@@ -67,7 +67,16 @@ Symphony will try the task again only after the ClickUp task changes, such as a 
 
 ## Codex Can Work Locally But Cannot Handle GitHub PR Steps
 
-Symphony checks for GitHub CLI availability and authentication. If `gh` is missing or not authenticated, PR-related workflow steps may stop early.
+Symphony checks for GitHub CLI availability, authentication, and active-account access to the workspace repository. If `gh` is missing, unauthenticated, or authenticated as an account that cannot see the repository, PR-related workflow steps may stop early.
+
+Run these commands inside the task workspace to verify the same inputs Symphony checks:
+
+```bash
+gh auth status
+gh repo view "$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\\.git$##')" --json nameWithOwner
+```
+
+If multiple GitHub accounts are logged in, switch the active account to one with repository access before retrying the ClickUp task.
 
 ## I Changed `WORKFLOW.md` But the Dashboard Port Did Not Change
 

@@ -10,21 +10,24 @@ describe("prompt helpers", () => {
     expect(prompt).toBe("Task CU-0 uses 868ht62zr");
   });
 
-  test("continuation prompt forbids MCP ClickUp tools and repeats the raw task ID", () => {
+  test("continuation prompt stays compact while preserving task and turn context", () => {
     const prompt = buildContinuationPrompt(baseIssue(), 2, 3);
 
-    expect(prompt).toContain("raw ClickUp task ID 868ht62zr");
-    expect(prompt).toContain("Do not use CU-0 as a ClickUp task ID");
-    expect(prompt).toContain("Do not call any mcp__clickup__* tools.");
+    expect(prompt).toContain("CU-0");
+    expect(prompt).toContain("Continuation turn 2/3");
+    expect(prompt).toContain("complete or blocked");
+    expect(prompt.split(/\s+/).length).toBeLessThan(30);
   });
 
   test("prepends environment notices when blockers are detected", () => {
     const prompt = prependEnvironmentContext("Finish the task.", [
-      "GitHub CLI authentication is unavailable for PR work in this environment: The token in default is invalid."
+      "GitHub CLI PR access needs attention (GitHub CLI cannot access repository acme/private-repo: repository access check failed.); avoid repeated `gh` retries, try available PR fallbacks such as switching to a logged-in account with repo access, and block only if no PR path works."
     ]);
 
     expect(prompt).toContain("Environment preflight:");
-    expect(prompt).toContain("The token in default is invalid.");
+    expect(prompt).toContain("acme/private-repo");
+    expect(prompt).toContain("try available PR fallbacks");
+    expect(prompt).toContain("block only if no PR path works");
     expect(prompt).toContain("Finish the task.");
   });
 });
